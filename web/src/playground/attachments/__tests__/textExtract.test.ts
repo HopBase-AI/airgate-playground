@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeTextBuffer, extractPlainText, truncateExtractedText } from '../textExtract';
 
 function utf8Buffer(text: string): ArrayBuffer {
-  return new TextEncoder().encode(text).buffer as ArrayBuffer;
+  return new TextEncoder().encode(text).buffer;
 }
 
 describe('truncateExtractedText', () => {
@@ -31,7 +31,7 @@ describe('decodeTextBuffer', () => {
   it('falls back to gbk for gbk-encoded chinese', () => {
     // "中文" 的 GBK 编码：D6 D0 CE C4
     const gbkBytes = new Uint8Array([0xd6, 0xd0, 0xce, 0xc4]);
-    const { text, charset } = decodeTextBuffer(gbkBytes.buffer as ArrayBuffer);
+    const { text, charset } = decodeTextBuffer(gbkBytes.buffer);
     expect(charset).toBe('gbk');
     expect(text).toBe('中文');
   });

@@ -187,7 +187,7 @@ function FileBlockChip({ block }: { block: ParsedFileBlock }) {
   return (
     <details
       style={fileBlockChipStyles.details}
-      onToggle={event => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      onToggle={event => setOpen((event.currentTarget).open)}
     >
       <summary style={fileBlockChipStyles.summary}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>

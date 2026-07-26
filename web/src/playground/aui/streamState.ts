@@ -35,7 +35,7 @@ export function appendStreamPart(
   if (!text) return parts;
   const last = parts[parts.length - 1];
   if (last && last.kind === kind) {
-    return [...parts.slice(0, -1), { kind, text: (last as StreamTextPart).text + text }];
+    return [...parts.slice(0, -1), { kind, text: (last).text + text }];
   }
   return [...parts, { kind, text }];
 }

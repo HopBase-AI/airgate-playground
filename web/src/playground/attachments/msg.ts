@@ -1,5 +1,5 @@
 import { htmlToText } from './htmlToText';
-import { isCfb, readCfb, type CfbEntry } from './cfb';
+import { isCfb, readCfb } from './cfb';
 import { decodeCharsetBytes } from './mime';
 import { truncateExtractedText } from './textExtract';
 import type { AttachmentIssue, ExtractedText } from './types';
@@ -134,7 +134,7 @@ export function extractMsg(buffer: ArrayBuffer, maxChars: number): ExtractedText
     return { content: '', truncated: false, warnings: [{ code: 'attachment.parse_failed' }] };
   }
   const streams = new Map<string, Uint8Array>();
-  for (const entry of cfb.entries as CfbEntry[]) {
+  for (const entry of cfb.entries) {
     if (entry.type !== 2) continue; // 只取流
     if (entry.name === '__properties_version1.0' || SUBSTG_RE.test(entry.name)) {
       streams.set(entry.name, cfb.read(entry));

@@ -124,7 +124,7 @@ async function canvasToJpegBlob(canvas: OffscreenCanvas | HTMLCanvasElement, qua
 async function renderToJpeg(decoded: DecodedImage, maxEdge: number, quality: number): Promise<Blob> {
   const { width, height } = scaledDimensions(decoded.width, decoded.height, maxEdge);
   const canvas = createCanvas(width, height);
-  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  const ctx = canvas.getContext('2d');
   if (!ctx) throw new AttachmentError({ code: 'attachment.image_compress_failed' });
   // JPEG 无透明通道：先铺白底，避免透明 PNG 变黑底
   ctx.fillStyle = '#ffffff';

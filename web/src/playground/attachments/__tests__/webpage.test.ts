@@ -3,7 +3,7 @@ import { htmlToText } from '../htmlToText';
 import { extractHtmlFile, extractMhtml } from '../webpage';
 
 function buf(raw: string): ArrayBuffer {
-  return new TextEncoder().encode(raw).buffer as ArrayBuffer;
+  return new TextEncoder().encode(raw).buffer;
 }
 
 describe('htmlToText', () => {
