@@ -1004,7 +1004,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   }), [isMobile, t]);
 
   const value: PlaygroundContextValue = {
-    t: t as PlaygroundContextValue['t'],
+    t: t,
     conversations,
     sidebarConversations,
     activeId,

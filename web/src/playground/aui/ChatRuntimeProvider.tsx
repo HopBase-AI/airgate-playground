@@ -44,8 +44,9 @@ export function ChatRuntimeProvider({ children }: { children: ReactNode }) {
         .join('\n');
       await submitUserMessage(text);
     },
-    onCancel: async () => {
+    onCancel: () => {
       stopStreaming();
+      return Promise.resolve();
     },
   });
 

@@ -281,7 +281,7 @@ export async function messageContentToClipboardHtml(content: string): Promise<st
 
   // 图片 URL 并行转 data URL（顺序 fetch 会让多图复制卡数秒）
   const dataUrls = await Promise.all(
-    segs.map(seg => (seg.kind === 'img' && !seg.url.startsWith('data:') ? urlToDataURL(seg.url) : null)),
+    segs.map(seg => (seg.kind === 'img' && !seg.url.startsWith('data:') ? urlToDataURL(seg.url) : Promise.resolve(null))),
   );
 
   const parts: string[] = [];

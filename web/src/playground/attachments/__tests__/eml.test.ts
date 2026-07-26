@@ -3,7 +3,7 @@ import { extractEml } from '../eml';
 import { decodeEncodedWords } from '../mime';
 
 function emlBuffer(raw: string): ArrayBuffer {
-  return new TextEncoder().encode(raw).buffer as ArrayBuffer;
+  return new TextEncoder().encode(raw).buffer;
 }
 
 describe('decodeEncodedWords', () => {
@@ -103,7 +103,7 @@ describe('extractEml', () => {
     raw.set(headers, 0);
     raw.set(body, headers.length);
 
-    const result = extractEml(raw.buffer as ArrayBuffer, 10_000);
+    const result = extractEml(raw.buffer, 10_000);
     expect(result.content).toContain('中文');
   });
 

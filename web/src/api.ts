@@ -187,6 +187,20 @@ export const api = {
   getUserInfo: () => request<UserInfo>('GET', '/user/info'),
 };
 
+// SSE chunk 的最小类型契约:字段全可选,消费侧显式兜底。
+// JSON.parse 出来的 any 一律先收进这个类型再用,别让 any 直接流进回调。
+interface StreamChunk {
+  error?: string | { message?: string };
+  object?: string;
+  event?: 'tool_call_started' | 'tool_call_finished';
+  iteration?: number;
+  call?: ToolEventCall;
+  choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string }>;
+  airgate?: { stop_reason?: string };
+  usage?: unknown;
+  model?: string;
+}
+
 export async function chatCompletionsStream(
   platform: string,
   body: {
@@ -259,14 +273,15 @@ export async function chatCompletionsStream(
           continue;
         }
         try {
-          const parsed = JSON.parse(payload);
+          const parsed = JSON.parse(payload) as StreamChunk;
           if (parsed.error) {
-            callbacks.onError(parsed.error.message || parsed.error);
+            const errText = typeof parsed.error === 'string' ? parsed.error : parsed.error.message;
+            callbacks.onError(errText || 'stream failed');
             return;
           }
           // 工具循环事件：与 OpenAI chunk 用 object 字段区分，参数不做流式增量。
-          if (parsed.object === 'airgate.tool_event') {
-            callbacks.onToolEvent?.(parsed.event, parsed.iteration ?? 0, parsed.call ?? {});
+          if (parsed.object === 'airgate.tool_event' && parsed.event) {
+            callbacks.onToolEvent?.(parsed.event, parsed.iteration ?? 0, parsed.call ?? { id: '', name: '' });
             continue;
           }
           const choiceDelta = parsed.choices?.[0]?.delta;
@@ -292,10 +307,10 @@ export async function chatCompletionsStream(
 }
 
 function normalizeStreamUsage(raw: any, fallbackModel: string) {
+  // 先把 any 数组收进最小类型再遍历,避免 any 直接流进算术
+  const metrics: Array<{ key?: string; value?: unknown }> = Array.isArray(raw?.metrics) ? raw.metrics : [];
   const metricValue = (key: string): number => {
-    const metric = Array.isArray(raw?.metrics)
-      ? raw.metrics.find((item: any) => item?.key === key)
-      : undefined;
+    const metric = metrics.find((item) => item?.key === key);
     const value = Number(metric?.value);
     return Number.isFinite(value) ? value : 0;
   };
@@ -304,14 +319,15 @@ function normalizeStreamUsage(raw: any, fallbackModel: string) {
   const completionTokens = Number(raw?.completion_tokens ?? raw?.output_tokens);
   const directCost = Number(raw?.cost ?? raw?.user_cost ?? raw?.account_cost);
 	const totalCost = Number.isFinite(directCost) ? Math.max(0, directCost) : 0;
-	const renderFeeRaw = Array.isArray(raw?.cost_details)
+	const costDetails: Array<{ key?: string; user_cost?: unknown }> = Array.isArray(raw?.cost_details)
 		? raw.cost_details
-			.filter((item: any) => item?.key === 'document_render')
-			.reduce((sum: number, item: any) => {
-				const value = Number(item?.user_cost);
-				return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
-			}, 0)
-		: 0;
+		: [];
+	const renderFeeRaw = costDetails
+		.filter((item) => item?.key === 'document_render')
+		.reduce((sum: number, item) => {
+			const value = Number(item?.user_cost);
+			return sum + (Number.isFinite(value) ? Math.max(0, value) : 0);
+		}, 0);
 	const renderFee = Math.min(totalCost, renderFeeRaw);
 
   return {
