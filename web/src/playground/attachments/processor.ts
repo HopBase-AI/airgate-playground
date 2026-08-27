@@ -140,7 +140,7 @@ export async function processAttachments(files: File[], snapshot: PendingSnapsho
         if (videoCount + 1 > MAX_VIDEOS_PER_MESSAGE) {
           throw new AttachmentError({
             code: 'attachment.too_many_videos',
-            params: { limit: MAX_VIDEOS_PER_MESSAGE, defaultValue: '每条消息最多 1 个视频' },
+            params: { limit: MAX_VIDEOS_PER_MESSAGE, defaultValue: 'Only one video per message' },
           });
         }
         const video = await processVideoFile(file);

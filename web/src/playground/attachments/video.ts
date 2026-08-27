@@ -43,7 +43,7 @@ export async function processVideoFile(file: File): Promise<ProcessedVideo> {
     bytes: file.size,
     warnings: [{
       code: 'attachment.video_gemini_only',
-      params: { defaultValue: '视频内容仅 Gemini 系列模型可识别' },
+      params: { defaultValue: 'Video input is only supported by Gemini-series models' },
     }],
   };
 }
