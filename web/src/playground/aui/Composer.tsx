@@ -8,6 +8,7 @@
 import { ComposerPrimitive, useComposer, useComposerRuntime } from '@assistant-ui/react';
 import type { ReasoningEffort } from '../types';
 import { usePlayground } from '../PlaygroundContext';
+import { ModelPicker } from './ModelPicker';
 import { attachmentAcceptList } from '../attachments/detect';
 import { formatByteSize } from '../utils';
 import { styles } from '../styles';
@@ -30,8 +31,8 @@ export function Composer() {
     fileInputRef,
     handleAttachmentChange,
     renderNativeSelect,
+    modelChoices,
     selectedModel,
-    modelOptions,
     setSelectedModel,
     selectedModelSupportsReasoning,
     reasoningEffort,
@@ -218,13 +219,13 @@ export function Composer() {
 
         <div style={{ ...styles.inputActions, ...(isMobile ? styles.inputActionsMobile : null) }}>
           <div style={{ ...styles.selectors, ...(isMobile ? styles.selectorsMobile : null) }}>
-            {renderNativeSelect({
-              id: 'model',
-              value: selectedModel,
-              options: modelOptions,
-              onChange: setSelectedModel,
-              ariaLabel: t('playground.model'),
-            })}
+            <ModelPicker
+              ariaLabel={t('playground.model')}
+              choices={modelChoices}
+              value={selectedModel}
+              onChange={setSelectedModel}
+              triggerStyle={{ ...styles.selectTrigger, minWidth: 160, maxWidth: 260, flexShrink: 1 }}
+            />
 
             {selectedModelSupportsReasoning && renderNativeSelect({
               id: 'reasoning-effort',
