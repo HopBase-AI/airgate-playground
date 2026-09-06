@@ -96,6 +96,8 @@ export interface PlaygroundContextValue {
   selectedPlatform: string;
   selectedModelSupportsReasoning: boolean;
   modelOptions: SelectOption[];
+  /** 自定义模型选择器用:选项值 + 完整模型信息(归组、上下文、平台) */
+  modelChoices: Array<{ value: string; model: ModelInfo }>;
   isDraggingFiles: boolean;
 
   pendingImages: PendingImage[];
@@ -235,6 +237,10 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
         label: `${model.name || model.id} · ${model.platform}`,
       }));
   }, [chatModels]);
+  const modelChoices = useMemo(
+    () => chatModels.map(model => ({ value: modelOptionValue(model), model })),
+    [chatModels],
+  );
 
   // 拉取动态模型目录；当前选中模型不在新目录里时回退默认
   useEffect(() => {
@@ -1022,6 +1028,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     selectedPlatform,
     selectedModelSupportsReasoning,
     modelOptions,
+    modelChoices,
     isDraggingFiles,
     pendingImages,
     pendingFiles,

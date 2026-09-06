@@ -115,6 +115,13 @@ export const keyframes = `
   pointer-events: auto;
 }
 
+/* 模型选择器:触发器沿用 .pg-composer-select 的外观;弹层选项 hover / 当前项浅底 */
+.pg-model-trigger { padding-right: 8px !important; }
+.pg-model-item:hover { background: var(--ag-bg-hover, rgba(148, 163, 184, 0.12)) !important; }
+.pg-model-item[data-active="true"] { background: var(--ag-bg-hover, rgba(148, 163, 184, 0.12)) !important; }
+.pg-model-item:focus-visible { outline: 2px solid var(--ag-border-focus, #3b82f6); outline-offset: -2px; }
+.pg-model-search::placeholder { color: var(--ag-text-tertiary, #9ca3af); }
+
 /* 跳到底部胶囊：贴底时 ThreadPrimitive.ScrollToBottom 自动 disabled，借此隐藏。
    胶囊与外层都带内联 display(inline-flex / flex),这里必须 !important 才压得过内联样式,
    否则贴底了胶囊仍然显示。 */
