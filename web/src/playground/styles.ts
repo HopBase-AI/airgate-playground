@@ -307,7 +307,7 @@ export const styles: Record<string, CSSProperties> = {
     gap: 12,
     minHeight: 36,
     padding: '7px 10px',
-    borderRadius: 8,
+    borderRadius: 6,
     cursor: 'pointer',
     transition: cssVar('transition'),
     marginBottom: 4,
@@ -315,7 +315,15 @@ export const styles: Record<string, CSSProperties> = {
   },
   convItemActive: {
     background: cssVar('bgHover'),
-    fontWeight: 500,
+    fontWeight: 600,
+  },
+  // 当前会话右侧的 6px 强调色圆点(HopBase 为橙)
+  convDot: {
+    width: 6,
+    height: 6,
+    flexShrink: 0,
+    borderRadius: 999,
+    background: 'var(--ag-accent, var(--ag-primary))',
   },
   convIcon: {
     display: 'inline-flex',
