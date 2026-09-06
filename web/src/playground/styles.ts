@@ -115,12 +115,14 @@ export const keyframes = `
   pointer-events: auto;
 }
 
-/* 跳到底部胶囊：贴底时 ThreadPrimitive.ScrollToBottom 自动 disabled，借此隐藏 */
+/* 跳到底部胶囊：贴底时 ThreadPrimitive.ScrollToBottom 自动 disabled，借此隐藏。
+   胶囊与外层都带内联 display(inline-flex / flex),这里必须 !important 才压得过内联样式,
+   否则贴底了胶囊仍然显示。 */
 .pg-jump-bottom[disabled] {
-  display: none;
+  display: none !important;
 }
 .pg-jump-bottom-wrap:has(> button[disabled]) {
-  display: none;
+  display: none !important;
 }
 .pg-jump-bottom:hover {
   background: var(--ag-bg-hover, rgba(148, 163, 184, 0.12)) !important;
