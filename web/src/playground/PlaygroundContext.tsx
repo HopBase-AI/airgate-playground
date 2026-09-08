@@ -509,7 +509,9 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     abortRef.current = null;
   }, [cancelStreamFlush]);
 
-  // 组件卸载时撤销挂起的帧，避免对已卸载组件 setState。
+  // 卸载时撤销已排期的那一帧。注意这里刻意不 abort 在途请求：卸载后上游仍会跑完，
+  // onDone 把回复落库，用户回到会话仍能看到这条回复（也已经为它付过费）。
+  // 若在此 abort，省下的是尾部 token，代价是用户直接丢失整条回复。
   useEffect(() => cancelStreamFlush, [cancelStreamFlush]);
 
   const streamAssistantResponse = useCallback(async ({
