@@ -1,7 +1,8 @@
 // 标准 markdown 渲染引擎：react-markdown（remark AST 管线）+ remark-gfm/remark-math，
 // 替代手写正则解析器。样式经 components 覆盖映射到自有组件（皮肤与解析解耦）。
-// 流式性能用 AI SDK 同款分块 memoization：marked.lexer 切块，已完成块 memo 跳过重渲染，
-// 每个 token 到达时只有最后一个未完成块会重新解析。
+// 流式性能用 AI SDK 同款分块 memoization：marked.lexer 负责块级切分（每次都切全文，
+// 见下方 lexBlocks 的说明），react-markdown 的 AST 解析与渲染则被 MemoBlock 按块挡住，
+// 每个 token 到达时只有最后一个未完成块会重新解析渲染。
 import { createContext, memo, useContext, useMemo, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,10 +13,13 @@ import { isSafeImageUrl, isSafeLinkUrl, isVideoAttachmentUrl } from './utils';
 
 // 宿主环境注入：图片/代码块/数学公式的实际渲染由 MessageRendering 提供
 // （它们依赖预览索引、hljs、KaTeX 等宿主能力），避免模块循环依赖。
+// 这三个钩子都只返回单个元素，由 React 按位置维持身份，不需要（也不能）带 key：
+// 曾用全局自增计数器当 key，导致每次渲染 key 都变，流式回复里的代码块/图片/公式
+// 每个 token 都被卸载重挂载（代码块闪烁、图片重解码、KaTeX 反复重排、选中被清空）。
 export interface MarkdownEnv {
-  renderImage: (key: string, url: string, alt: string) => ReactNode;
-  renderCodeBlock: (key: string, language: string, code: string) => ReactNode;
-  renderMath: (key: string, tex: string, displayMode: boolean) => ReactNode;
+  renderImage: (url: string, alt: string) => ReactNode;
+  renderCodeBlock: (language: string, code: string) => ReactNode;
+  renderMath: (tex: string, displayMode: boolean) => ReactNode;
 }
 
 const MarkdownEnvContext = createContext<MarkdownEnv | null>(null);
@@ -45,13 +49,10 @@ function useEnv(): MarkdownEnv {
   return env;
 }
 
-let seq = 0;
-const nextKey = () => `md-${++seq}`;
-
 function CodeOrMath({ className, children }: { className?: string; children?: ReactNode }) {
   const env = useEnv();
   if (className?.includes('math-inline')) {
-    return env.renderMath(nextKey(), nodeText(children), false);
+    return env.renderMath(nodeText(children), false);
   }
   return <code style={styles.markdownInlineCode}>{children}</code>;
 }
@@ -64,10 +65,10 @@ function PreBlock({ children }: { children?: ReactNode }) {
   const className = codeEl?.props?.className || '';
   const raw = nodeText(codeEl?.props?.children ?? '').replace(/\n$/, '');
   if (className.includes('math-display') || /language-math\b/.test(className)) {
-    return env.renderMath(nextKey(), raw, true);
+    return env.renderMath(raw, true);
   }
   const language = /language-([\w+#-]+)/.exec(className)?.[1] || '';
-  return env.renderCodeBlock(nextKey(), language, raw);
+  return env.renderCodeBlock(language, raw);
 }
 
 function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
@@ -78,7 +79,6 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
   if (isVideoAttachmentUrl(url)) {
     return (
       <video
-        key={nextKey()}
         src={url}
         controls
         preload="metadata"
@@ -86,7 +86,7 @@ function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
       />
     );
   }
-  return env.renderImage(nextKey(), url, alt || '');
+  return env.renderImage(url, alt || '');
 }
 
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
@@ -181,16 +181,24 @@ function injectGlobalMarkdownStyle() {
   document.head.appendChild(style);
 }
 
+// 切分保持全量 lex：曾尝试「只重切最后一块」的增量优化，但被测试证伪——
+// marked 的列表 token 会跨多个块回并（`- 父` + 空行 + `  - 子` 重新合成一个 list），
+// 松散列表可以任意长，不存在安全的固定重切窗口；且 token.raw 对残缺输入会被
+// 规范化（`'- '` → `'-\n'`），块长度并不等于原文跨度。
+// 流式下的重复切分成本已由 PlaygroundContext 的合帧提交封顶（每帧至多一次，
+// 而非每 token 一次），不需要在这里冒正确性的险。
+function lexBlocks(content: string): string[] {
+  try {
+    return marked.lexer(content).map((token) => token.raw);
+  } catch {
+    return [content];
+  }
+}
+
 export function MarkdownMessage({ content, env }: { content: string; env: MarkdownEnv }) {
   injectGlobalMarkdownStyle();
   // marked.lexer 只做块级切分（raw 原文透传给 react-markdown），不参与渲染
-  const blocks = useMemo(() => {
-    try {
-      return marked.lexer(content).map((token) => token.raw);
-    } catch {
-      return [content];
-    }
-  }, [content]);
+  const blocks = useMemo(() => lexBlocks(content), [content]);
 
   return (
     <MarkdownEnvContext.Provider value={env}>

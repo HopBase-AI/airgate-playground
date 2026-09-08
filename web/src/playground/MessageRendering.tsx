@@ -11,7 +11,9 @@ const MathRenderer = lazy(() => import('../MathRenderer'));
 export function GeneratedImageFrame({ url, alt, options, imageIndex }: {
   url: string; alt: string; options: MessageContentOptions; imageIndex: number;
 }) {
-  const [dimensions, setDimensions] = useState('');
+  // 与 CodeBlock 同理：组件不再随渲染重挂载，尺寸标签须与其来源 url 绑定，
+  // 否则换图后会短暂显示上一张图的尺寸。
+  const [dimensions, setDimensions] = useState<{ url: string; label: string } | null>(null);
   const imageNode = (
     <img
       src={url}
@@ -21,7 +23,7 @@ export function GeneratedImageFrame({ url, alt, options, imageIndex }: {
       onLoad={e => {
         const img = e.currentTarget;
         if (img.naturalWidth && img.naturalHeight) {
-          setDimensions(`${img.naturalWidth}×${img.naturalHeight}`);
+          setDimensions({ url, label: `${img.naturalWidth}×${img.naturalHeight}` });
         }
       }}
     />
@@ -42,22 +44,24 @@ export function GeneratedImageFrame({ url, alt, options, imageIndex }: {
   return (
     <span style={{ ...styles.generatedImageFrame, ...(options.isMobile ? styles.generatedImageFrameMobile : null) }}>
       {previewableImage}
-      {dimensions && <span style={styles.generatedImageDimensions}>{dimensions}</span>}
+      {dimensions?.url === url && (
+        <span style={styles.generatedImageDimensions}>{dimensions.label}</span>
+      )}
     </span>
   );
 }
 
-function renderGeneratedImage(key: string, url: string, alt: string, options: MessageContentOptions) {
+function renderGeneratedImage(url: string, alt: string, options: MessageContentOptions) {
   const imageIndex = options.takeImageIndex?.() ?? -1;
-  return <GeneratedImageFrame key={key} url={url} alt={alt} options={options} imageIndex={imageIndex} />;
+  return <GeneratedImageFrame url={url} alt={alt} options={options} imageIndex={imageIndex} />;
 }
 
-function renderMath(tex: string, key: string, displayMode: boolean) {
+function renderMath(tex: string, displayMode: boolean) {
   const Tag = displayMode ? 'div' : 'span';
   const style = displayMode ? styles.markdownBlockMath : styles.markdownInlineMath;
   const fallback = <Tag style={style}>{tex}</Tag>;
   return (
-    <Suspense key={key} fallback={fallback}>
+    <Suspense fallback={fallback}>
       <MathRenderer displayMode={displayMode} style={style} tex={tex} />
     </Suspense>
   );
@@ -66,15 +70,18 @@ function renderMath(tex: string, key: string, displayMode: boolean) {
 // 代码块：语言标签 + 一键复制 + 异步语法高亮。样式由 shell 承载（markdownCodeBlock 只管 pre 本体）。
 // 高亮是渐进增强：hljs 未加载/语言未知/加载失败时保持纯文本。流式输出时内容逐 chunk 变化，
 // 防抖 150ms 避免每个 token 都跑一遍 tokenizer。
+// 高亮结果必须与其来源代码绑定：本组件不再随渲染重挂载（key 已移除），若只存 HTML，
+// 代码增长后在防抖落地前会继续渲染上一版更短的内容——流式时观感是代码块卡住甚至回退。
+// 因此 code 不匹配时一律回落到当前纯文本，与重挂载时代的表现一致。
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
-  const [highlighted, setHighlighted] = useState('');
+  const [highlighted, setHighlighted] = useState<{ code: string; html: string } | null>(null);
 
   useEffect(() => {
     const lang = normalizeHighlightLanguage(language);
     if (!lang || !code) {
-      setHighlighted('');
+      setHighlighted(null);
       return;
     }
     let cancelled = false;
@@ -84,7 +91,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
           if (cancelled || !hljs.getLanguage(lang)) return;
           // hljs.highlight 会转义非 token 文本，输出可安全注入
           const { value } = hljs.highlight(code, { language: lang, ignoreIllegals: true });
-          if (!cancelled) setHighlighted(value);
+          if (!cancelled) setHighlighted({ code, html: value });
         })
         .catch(() => {});
     }, 150);
@@ -124,9 +131,9 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
           {copied ? t('playground.copied') : t('common.copy')}
         </button>
       </div>
-      {highlighted ? (
+      {highlighted?.code === code ? (
         // hljs.highlight 会转义非 token 文本，输出可安全注入
-        <pre style={styles.markdownCodeBlock}><code dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
+        <pre style={styles.markdownCodeBlock}><code dangerouslySetInnerHTML={{ __html: highlighted.html }} /></pre>
       ) : (
         <pre style={styles.markdownCodeBlock}><code>{code}</code></pre>
       )}
@@ -254,10 +261,10 @@ function renderMarkdownContent(content: string, options: MessageContentOptions =
   const renderOptions: MessageContentOptions = { ...options, takeImageIndex };
 
   const env: MarkdownEnv = {
-    renderImage: (key, url, alt) =>
-      renderGeneratedImage(key, url, alt || options.generatedImageAlt || 'Generated image', renderOptions),
-    renderCodeBlock: (key, language, code) => <CodeBlock key={key} language={language} code={code} />,
-    renderMath: (key, tex, displayMode) => renderMath(tex, key, displayMode),
+    renderImage: (url, alt) =>
+      renderGeneratedImage(url, alt || options.generatedImageAlt || 'Generated image', renderOptions),
+    renderCodeBlock: (language, code) => <CodeBlock language={language} code={code} />,
+    renderMath: (tex, displayMode) => renderMath(tex, displayMode),
   };
 
   const nodes: ReactNode[] = [<MarkdownMessage key="md" content={content} env={env} />];
