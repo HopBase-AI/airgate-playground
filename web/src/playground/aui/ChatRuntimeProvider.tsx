@@ -7,19 +7,21 @@ import {
   useExternalStoreRuntime,
   type AppendMessage,
 } from '@assistant-ui/react';
-import { usePlayground } from '../PlaygroundContext';
+import { usePlayground, useStreamParts } from '../PlaygroundContext';
 import { convertAuiMessage, type AuiSourceMessage } from './convert';
 
 export function ChatRuntimeProvider({ children }: { children: ReactNode }) {
   const {
     messages,
     isActiveConversationStreaming,
-    streamParts,
     canSubmit,
     submitUserMessage,
     stopStreaming,
     composerApiRef,
   } = usePlayground();
+  // 每帧变化的流式增量走独立 context，不经 usePlayground——否则一次流式
+  // 会把整个 Playground 消费者树（侧边栏/Composer/通知条）一起重渲染。
+  const streamParts = useStreamParts();
 
   // 活跃会话消息 ⊕ 流式临时消息（仅当流式发生在当前会话时追加）。
   // 流式中末位始终是 assistant 消息，避免 runtime 注入自己的 optimistic 占位。

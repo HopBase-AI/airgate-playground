@@ -68,6 +68,10 @@ declare global {
   }
 }
 
+// 稳定的空数组引用：非流式期间 StreamPartsContext 恒为它，消费者不会因为
+// 每次 render 新建 [] 而误判成变更。
+const EMPTY_STREAM_PARTS: readonly StreamPart[] = [];
+
 // ChatRuntimeProvider 注入的 composer 文本操作口：PlaygroundContext 在
 // 粘贴回填/发送失败恢复时经它读写 assistant-ui composer 的草稿文本。
 export interface ComposerTextApi {
@@ -83,7 +87,6 @@ export interface PlaygroundContextValue {
   activeId: number | null;
   messages: Message[];
   isStreaming: boolean;
-  streamParts: readonly StreamPart[];
   streamConversationId: number | null;
   isActiveConversationStreaming: boolean;
   hasRecoverableUserMessage: boolean;
@@ -155,10 +158,20 @@ export interface PlaygroundContextValue {
 
 const PlaygroundContext = createContext<PlaygroundContextValue | null>(null);
 
+// streamParts 单独开一个 context：它每帧都变，而 PlaygroundContextValue 里的其余字段
+// 在一次回复里基本不变。合在一起会让每帧的流式增量把侧边栏、Composer、通知条
+// 一起重渲染（一条 2000 token 的回答 = 侧边栏重渲染 2000 次）。
+// 唯一消费者是 ChatRuntimeProvider。
+const StreamPartsContext = createContext<readonly StreamPart[]>(EMPTY_STREAM_PARTS);
+
 export function usePlayground() {
   const ctx = useContext(PlaygroundContext);
   if (!ctx) throw new Error('usePlayground must be used within PlaygroundProvider');
   return ctx;
+}
+
+export function useStreamParts(): readonly StreamPart[] {
+  return useContext(StreamPartsContext);
 }
 
 export function PlaygroundProvider({ children }: { children: ReactNode }) {
@@ -169,7 +182,12 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [messages, setMessagesRaw] = useState<Message[]>([]);
   const [streamConversationId, setStreamConversationId] = useState<number | null>(null);
-  const [streamParts, setStreamParts] = useState<readonly StreamPart[]>([]);
+  const [streamParts, setStreamParts] = useState<readonly StreamPart[]>(EMPTY_STREAM_PARTS);
+  // 流式增量的权威累加器。上游按 token 推送 SSE，直接每片 setState 会把渲染
+  // 频率顶到 30-100 次/秒；这里同步累加到 ref，再按帧（rAF）提交给 React，
+  // 顺序与最终值都与逐片提交完全一致，只是少了中间帧。
+  const streamPartsRef = useRef<readonly StreamPart[]>(EMPTY_STREAM_PARTS);
+  const streamFlushHandleRef = useRef<number | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -464,12 +482,35 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     }
   }, [setMessages, t]);
 
+  // cancelStreamFlush 撤销尚未执行的帧提交。收尾时必须先撤销，否则残留的一帧
+  // 会在 streamParts 清空之后把旧增量重新写回去（末条回复重影）。
+  const cancelStreamFlush = useCallback(() => {
+    if (streamFlushHandleRef.current !== null) {
+      cancelAnimationFrame(streamFlushHandleRef.current);
+      streamFlushHandleRef.current = null;
+    }
+  }, []);
+
+  // scheduleStreamFlush 合帧提交：一帧内到达的多个增量只触发一次 setState。
+  const scheduleStreamFlush = useCallback(() => {
+    if (streamFlushHandleRef.current !== null) return;
+    streamFlushHandleRef.current = requestAnimationFrame(() => {
+      streamFlushHandleRef.current = null;
+      setStreamParts(streamPartsRef.current);
+    });
+  }, []);
+
   const finishStreaming = useCallback(() => {
+    cancelStreamFlush();
+    streamPartsRef.current = EMPTY_STREAM_PARTS;
     setIsStreaming(false);
-    setStreamParts([]);
+    setStreamParts(EMPTY_STREAM_PARTS);
     setStreamConversationId(null);
     abortRef.current = null;
-  }, []);
+  }, [cancelStreamFlush]);
+
+  // 组件卸载时撤销挂起的帧，避免对已卸载组件 setState。
+  useEffect(() => cancelStreamFlush, [cancelStreamFlush]);
 
   const streamAssistantResponse = useCallback(async ({
     conversationID,
@@ -495,7 +536,9 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     setRetryRequest(null);
     setIsStreaming(true);
     setStreamConversationId(conversationID);
-    setStreamParts([]);
+    cancelStreamFlush();
+    streamPartsRef.current = EMPTY_STREAM_PARTS;
+    setStreamParts(EMPTY_STREAM_PARTS);
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -530,30 +573,37 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
         baseRequest,
         {
           onData: (text) => {
+            // 用户点「停止」后上游可能还在途中；此时丢弃增量，避免已清空的
+            // 流式区被一段残帧重新点亮。
+            if (abort.signal.aborted) return;
             const chunk = replaceBase64WithBlobUrls(text, blobUrlRegistryRef.current);
             accumulated += chunk;
-            setStreamParts(prev => appendStreamPart(prev, 'text', chunk));
+            streamPartsRef.current = appendStreamPart(streamPartsRef.current, 'text', chunk);
+            scheduleStreamFlush();
           },
           onReasoning: (text) => {
+            if (abort.signal.aborted) return;
             accumulatedReasoning += text;
-            setStreamParts(prev => appendStreamPart(prev, 'reasoning', text));
+            streamPartsRef.current = appendStreamPart(streamPartsRef.current, 'reasoning', text);
+            scheduleStreamFlush();
           },
           onToolEvent: (event, _iteration, call) => {
+            if (abort.signal.aborted) return;
             const status: ToolCallStatus | undefined = event === 'tool_call_finished'
               ? (call.status === 'error' ? 'error' : 'complete')
               : 'running';
-            setStreamParts(prev => {
-              const next = upsertToolPart(prev, {
-                id: call.id,
-                name: call.name,
-                status,
-                args: call.arguments,
-                result: call.result,
-                error: call.error,
-              });
-              finalStreamParts = next;
-              return next;
+            streamPartsRef.current = upsertToolPart(streamPartsRef.current, {
+              id: call.id,
+              name: call.name,
+              status,
+              args: call.arguments,
+              result: call.result,
+              error: call.error,
             });
+            // 工具产物随消息落库（历史会话重建工具卡）：ref 是同步权威值，
+            // 不依赖 React 是否已经提交这一帧。
+            finalStreamParts = streamPartsRef.current;
+            scheduleStreamFlush();
           },
           onDone: async (usage) => {
             // 工具循环可能出现「只出文档卡片、正文极简」的情况，正文空但有工具
@@ -600,7 +650,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       if (abort.signal.aborted) return;
       fail(err instanceof Error ? err.message : 'stream failed');
     }
-  }, [finishStreaming, reasoningEffort, setMessages, t]);
+  }, [cancelStreamFlush, finishStreaming, reasoningEffort, scheduleStreamFlush, setMessages, t]);
 
   // 发送用户消息。text 由调用方入参化：
   // - 文本路径：assistant-ui composer.send() → adapter.onNew 取 text parts 后调用
@@ -1009,14 +1059,13 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     isMobile,
   }), [isMobile, t]);
 
-  const value: PlaygroundContextValue = {
+  const value = useMemo<PlaygroundContextValue>(() => ({
     t: t,
     conversations,
     sidebarConversations,
     activeId,
     messages,
     isStreaming,
-    streamParts,
     streamConversationId,
     isActiveConversationStreaming,
     hasRecoverableUserMessage,
@@ -1068,7 +1117,26 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     handlePaste,
     renderNativeSelect,
     interactiveMessageOptions,
-  };
+  }), [
+    t, conversations, sidebarConversations, activeId, messages, isStreaming,
+    streamConversationId, isActiveConversationStreaming, hasRecoverableUserMessage,
+    hasOutputLimitReached, selectedModel, selectedModelInfo, selectedModelID,
+    selectedPlatform, selectedModelSupportsReasoning, modelOptions, modelChoices,
+    isDraggingFiles, pendingImages, pendingFiles, isProcessingAttachments, canSubmit,
+    error, retryRequest, interactionNotice, previewImage, userInfo, reasoningEffort,
+    thinkingVisible, isMobile, sidebarOpen, createConversation, openConversation,
+    deleteConversation, submitUserMessage, stopStreaming, regenerateLastResponse,
+    regenerateUnfinishedResponse, continueLastResponse, handleMessageCopy,
+    showImagePreview, showNextPreviewImage, removePendingImage, removePendingFile,
+    triggerImagePicker, handleAttachmentChange, handlePaste, renderNativeSelect,
+    interactiveMessageOptions,
+  ]);
 
-  return <PlaygroundContext.Provider value={value}>{children}</PlaygroundContext.Provider>;
+  return (
+    <PlaygroundContext.Provider value={value}>
+      <StreamPartsContext.Provider value={streamParts}>
+        {children}
+      </StreamPartsContext.Provider>
+    </PlaygroundContext.Provider>
+  );
 }

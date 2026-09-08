@@ -47,17 +47,17 @@ export function GeneratedImageFrame({ url, alt, options, imageIndex }: {
   );
 }
 
-function renderGeneratedImage(key: string, url: string, alt: string, options: MessageContentOptions) {
+function renderGeneratedImage(url: string, alt: string, options: MessageContentOptions) {
   const imageIndex = options.takeImageIndex?.() ?? -1;
-  return <GeneratedImageFrame key={key} url={url} alt={alt} options={options} imageIndex={imageIndex} />;
+  return <GeneratedImageFrame url={url} alt={alt} options={options} imageIndex={imageIndex} />;
 }
 
-function renderMath(tex: string, key: string, displayMode: boolean) {
+function renderMath(tex: string, displayMode: boolean) {
   const Tag = displayMode ? 'div' : 'span';
   const style = displayMode ? styles.markdownBlockMath : styles.markdownInlineMath;
   const fallback = <Tag style={style}>{tex}</Tag>;
   return (
-    <Suspense key={key} fallback={fallback}>
+    <Suspense fallback={fallback}>
       <MathRenderer displayMode={displayMode} style={style} tex={tex} />
     </Suspense>
   );
@@ -254,10 +254,10 @@ function renderMarkdownContent(content: string, options: MessageContentOptions =
   const renderOptions: MessageContentOptions = { ...options, takeImageIndex };
 
   const env: MarkdownEnv = {
-    renderImage: (key, url, alt) =>
-      renderGeneratedImage(key, url, alt || options.generatedImageAlt || 'Generated image', renderOptions),
-    renderCodeBlock: (key, language, code) => <CodeBlock key={key} language={language} code={code} />,
-    renderMath: (key, tex, displayMode) => renderMath(tex, key, displayMode),
+    renderImage: (url, alt) =>
+      renderGeneratedImage(url, alt || options.generatedImageAlt || 'Generated image', renderOptions),
+    renderCodeBlock: (language, code) => <CodeBlock language={language} code={code} />,
+    renderMath: (tex, displayMode) => renderMath(tex, displayMode),
   };
 
   const nodes: ReactNode[] = [<MarkdownMessage key="md" content={content} env={env} />];
