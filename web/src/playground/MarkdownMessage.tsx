@@ -1,7 +1,8 @@
 // 标准 markdown 渲染引擎：react-markdown（remark AST 管线）+ remark-gfm/remark-math，
 // 替代手写正则解析器。样式经 components 覆盖映射到自有组件（皮肤与解析解耦）。
-// 流式性能用 AI SDK 同款分块 memoization：marked.lexer 切块，已完成块 memo 跳过重渲染，
-// 每个 token 到达时只有最后一个未完成块会重新解析。
+// 流式性能用 AI SDK 同款分块 memoization：marked.lexer 负责块级切分（每次都切全文，
+// 见下方 lexBlocks 的说明），react-markdown 的 AST 解析与渲染则被 MemoBlock 按块挡住，
+// 每个 token 到达时只有最后一个未完成块会重新解析渲染。
 import { createContext, memo, useContext, useMemo, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
