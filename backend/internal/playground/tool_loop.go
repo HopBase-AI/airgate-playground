@@ -81,6 +81,11 @@ func (p *Plugin) runToolLoop(
 			return
 		}
 		logger.Warn("tool_loop_failed", sdk.LogFieldError, loopErr, "iterations", stats.iterations)
+		// 响应头已提交，只能以 SSE error 帧下发；成员分组白名单拒绝同样要给明确提示
+		if p.forwardErrorIsMemberGroupForbidden(ctx, loopErr, int64(parseUserID(r)), platform) {
+			writeSSEErrorFrame(w, chatErrMemberGroupForbidden)
+			return
+		}
 		writeSSEErrorFrame(w, "请求暂时无法完成，请稍后重试")
 		return
 	}

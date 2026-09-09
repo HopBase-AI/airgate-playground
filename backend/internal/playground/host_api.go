@@ -17,6 +17,7 @@ const (
 	hostMethodGatewayForward = "gateway.forward"
 	hostMethodUsersGet       = "users.get"
 	hostMethodModelsList     = "models.list"
+	hostMethodGroupsList     = "groups.list"
 	hostMethodAssetsStore    = "assets.store"
 	hostMethodAssetsGetURL   = "assets.get_url"
 	hostMethodAssetsGetBytes = "assets.get_bytes"
@@ -70,6 +71,22 @@ func hostListModels(ctx context.Context, host sdk.Host, platform string) ([]host
 		}
 	}
 	return models, nil
+}
+
+// hostCountEligibleGroups 查询用户在某平台下有转发资格的分组数（groups.list 的 eligible_only 分支）。
+// 资格判定全在 core：成员账号按企业主判定、再按成员分组白名单收敛，与 gateway.forward
+// 未指定 group_id 时的自动选组口径一致——为 0 即意味着该平台的任何模型都路由不到。
+func hostCountEligibleGroups(ctx context.Context, host sdk.Host, userID int64, platform string) (int, error) {
+	result, err := hostInvoke(ctx, host, hostMethodGroupsList, map[string]interface{}{
+		"user_id":       userID,
+		"eligible_only": true,
+		"platform":      platform,
+	})
+	if err != nil {
+		return 0, err
+	}
+	groups, _ := result["groups"].([]interface{})
+	return len(groups), nil
 }
 
 type hostForwardRequest struct {

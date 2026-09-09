@@ -166,7 +166,8 @@ export const api = {
   listConversations: () => request<Conversation[]>('GET', '/conversations'),
 
   // 动态模型目录：来自各网关插件注册表（claude＝Max 号池网关声明的模型）
-  listChatModels: () => request<{ models: ChatModelItem[] }>('GET', '/models'),
+  // eligible_platforms：当前用户有转发资格的平台（旧后端不返回）；被权限裁掉的平台不得用硬编码兜底补回
+  listChatModels: () => request<{ models: ChatModelItem[]; eligible_platforms?: string[] }>('GET', '/models'),
 
   createConversation: (data: { title?: string; group_id?: number; platform?: string; model?: string }) =>
     request<Conversation>('POST', '/conversations', data),

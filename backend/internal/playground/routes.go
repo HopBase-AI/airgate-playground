@@ -542,7 +542,7 @@ func (p *Plugin) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				sdk.LogFieldModel, plan.Model,
 				sdk.LogFieldError, err,
 			)
-			writeHostForwardError(w, err)
+			p.writeChatForwardError(ctx, w, err, int64(parseUserID(r)), plan.Platform)
 			return
 		}
 		logger.Debug("upstream_request_completed",
@@ -661,7 +661,7 @@ func (p *Plugin) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			sdk.LogFieldError, res.err,
 		)
 		if !res.committed {
-			writeHostForwardError(w, res.err)
+			p.writeChatForwardError(ctx, w, res.err, int64(parseUserID(r)), plan.Platform)
 			return
 		}
 		_, _ = w.Write([]byte("data: {\"error\":{\"message\":\"请求暂时无法完成，请稍后重试\",\"type\":\"server_error\",\"code\":\"upstream_error\"}}\n\n"))
@@ -718,6 +718,9 @@ func (p *Plugin) handleGetUserInfo(w http.ResponseWriter, r *http.Request) {
 var chatModelPlatforms = []string{"claude", "openai", "gemini"}
 
 func (p *Plugin) handleListModels(w http.ResponseWriter, r *http.Request) {
+	// 企业成员的分组白名单可能把某平台的分组全排除，此时该平台的模型对他根本路由不到，
+	// 不能出现在下拉里（否则发消息时 core 自动选组零候选，只能报通用错误）。
+	eligible := p.resolvePlatformEligibility(r.Context(), int64(parseUserID(r)), chatModelPlatforms)
 	models := make([]hostModelInfo, 0, 16)
 	for _, platform := range chatModelPlatforms {
 		items, err := hostListModels(r.Context(), p.host, platform)
@@ -733,7 +736,61 @@ func (p *Plugin) handleListModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": models})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"models": filterChatModelsByEligibility(models, eligible),
+		// 前端用它区分"平台被权限裁掉"与"平台目录暂时拉不到"：后者才用硬编码兜底补齐
+		"eligible_platforms": eligible.allowedPlatforms(chatModelPlatforms),
+	})
+}
+
+// platformEligibility 用户在各平台的转发资格：true＝至少有一个可用分组；false＝一个都没有
+// （典型：企业成员的分组白名单把该平台的分组全排除）；查询失败的平台不入表，视为未知放行——
+// 资格查询出问题绝不能让所有人的 AI Chat 没模型可选。
+type platformEligibility map[string]bool
+
+// resolvePlatformEligibility 逐平台经 groups.list(eligible_only) 判定资格；host 不可用或拿不到
+// 用户身份时返回空表（全部放行，即旧行为）。
+func (p *Plugin) resolvePlatformEligibility(ctx context.Context, userID int64, platforms []string) platformEligibility {
+	eligible := platformEligibility{}
+	if p.host == nil || userID <= 0 {
+		return eligible
+	}
+	for _, platform := range platforms {
+		count, err := hostCountEligibleGroups(ctx, p.host, userID, platform)
+		if err != nil {
+			if p.logger != nil {
+				p.logger.Warn("chat_platform_eligibility_query_failed",
+					sdk.LogFieldPlatform, platform, sdk.LogFieldUserID, userID, sdk.LogFieldError, err)
+			}
+			continue
+		}
+		eligible[strings.ToLower(platform)] = count > 0
+	}
+	return eligible
+}
+
+// allowedPlatforms 按给定顺序返回未被明确判为无资格的平台（未知视为有资格）。
+func (e platformEligibility) allowedPlatforms(platforms []string) []string {
+	out := make([]string, 0, len(platforms))
+	for _, platform := range platforms {
+		if allowed, known := e[strings.ToLower(platform)]; known && !allowed {
+			continue
+		}
+		out = append(out, platform)
+	}
+	return out
+}
+
+// filterChatModelsByEligibility 裁掉用户明确无资格平台的模型；资格未知的平台原样保留。
+func filterChatModelsByEligibility(models []hostModelInfo, eligible platformEligibility) []hostModelInfo {
+	out := make([]hostModelInfo, 0, len(models))
+	for _, m := range models {
+		if allowed, known := eligible[strings.ToLower(m.Platform)]; known && !allowed {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // modelSupportsChat 判断模型是否可用于对话。空 capabilities 视为对话模型（历史/兜底），
@@ -898,6 +955,44 @@ func writeOpenAIError(w http.ResponseWriter, status int, errType, code, message 
 			"code":    code,
 		},
 	})
+}
+
+// chatErrMemberGroupForbidden 企业成员选了白名单外分组才能路由到的模型时的用户提示。
+const chatErrMemberGroupForbidden = "企业管理员未授予该模型的使用权限，请联系企业管理员或换一个模型"
+
+// memberGroupForbiddenHint core 拒绝成员使用白名单外分组时的错误文案片段
+// （auth.ErrMemberGroupForbidden＝"所属团队成员无权使用该分组"）。插件不能 import core，只能按文案识别。
+const memberGroupForbiddenHint = "无权使用该分组"
+
+// isMemberGroupForbiddenError 判断 core 是否因成员分组白名单显式拒绝了转发（PermissionDenied）。
+func isMemberGroupForbiddenError(err error) bool {
+	s, ok := status.FromError(err)
+	return ok && s.Code() == codes.PermissionDenied && strings.Contains(s.Message(), memberGroupForbiddenHint)
+}
+
+// forwardErrorIsMemberGroupForbidden 把两种形态的"成员无权用该模型"归一：
+//  1. core 显式拒绝（PermissionDenied + 白名单文案）；
+//  2. 自动选组时白名单把候选分组全滤掉——core 只返回通用 Unavailable，从错误本身分不出是上游故障
+//     还是没有可用分组，这里追问一次 groups.list(eligible_only)：该平台确无任何可用分组才定性为权限问题。
+func (p *Plugin) forwardErrorIsMemberGroupForbidden(ctx context.Context, err error, userID int64, platform string) bool {
+	if isMemberGroupForbiddenError(err) {
+		return true
+	}
+	s, ok := status.FromError(err)
+	if !ok || s.Code() != codes.Unavailable || p.host == nil || userID <= 0 || strings.TrimSpace(platform) == "" {
+		return false
+	}
+	count, qerr := hostCountEligibleGroups(ctx, p.host, userID, platform)
+	return qerr == nil && count == 0
+}
+
+// writeChatForwardError 在通用映射之前先识别成员分组白名单拒绝，给出可操作的提示。
+func (p *Plugin) writeChatForwardError(ctx context.Context, w http.ResponseWriter, err error, userID int64, platform string) {
+	if p.forwardErrorIsMemberGroupForbidden(ctx, err, userID, platform) {
+		writeOpenAIError(w, http.StatusForbidden, "permission_error", "member_group_forbidden", chatErrMemberGroupForbidden)
+		return
+	}
+	writeHostForwardError(w, err)
 }
 
 func writeHostForwardError(w http.ResponseWriter, err error) {
