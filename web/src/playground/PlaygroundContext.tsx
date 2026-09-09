@@ -255,13 +255,17 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
         max_output_tokens: item.max_output_tokens,
         capabilities: item.capabilities || [],
       }));
-      if (!items.length) return;
+      // 后端按用户的分组资格裁过平台（企业成员白名单）；旧后端不返回该字段，视为全部有资格
+      const eligiblePlatforms = Array.isArray(result.eligible_platforms) ? new Set(result.eligible_platforms) : null;
+      const platformEligible = (platform: string) => !eligiblePlatforms || eligiblePlatforms.has(platform);
+      if (!items.length && !eligiblePlatforms) return;
       // 某平台在动态目录里缺失（如该网关插件短暂不可用）时，用硬编码兜底补齐该平台，
-      // 避免一次上游抖动就让整类模型（如全部 Claude）从下拉里消失
+      // 避免一次上游抖动就让整类模型（如全部 Claude）从下拉里消失；
+      // 但被权限裁掉的平台不能补回，否则成员又会选到路由不到的模型
       const dynamicPlatforms = new Set(items.map(model => model.platform));
       const merged = [...items];
       for (const fallback of CHAT_MODEL_REGISTRY) {
-        if (!dynamicPlatforms.has(fallback.platform)) merged.push(fallback);
+        if (!dynamicPlatforms.has(fallback.platform) && platformEligible(fallback.platform)) merged.push(fallback);
       }
       setChatModels(merged);
       // 恢复用户持久化的选择（可能是动态目录独有、初始 registry 里没有的模型）
