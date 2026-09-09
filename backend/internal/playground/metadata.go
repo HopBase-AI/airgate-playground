@@ -147,6 +147,9 @@ func BuildPluginInfo() sdk.PluginInfo {
 			sdk.CapabilityForHostMethod(hostMethodGatewayForward),
 			sdk.CapabilityForHostMethod(hostMethodUsersGet),
 			sdk.CapabilityForHostMethod(hostMethodModelsList),
+			// 成员分组资格判定（/models 裁剪与白名单拒绝识别）经 groups.list；未声明会被 core 拒为 PermissionDenied，
+			// 插件端查询失败即放行，模型列表就退化成全量——2026-09-09 生产 E2E 抓到的漏洞。
+			sdk.CapabilityForHostMethod(hostMethodGroupsList),
 			sdk.CapabilityForHostMethod(hostMethodAssetsStore),
 			sdk.CapabilityForHostMethod(hostMethodAssetsGetURL),
 			sdk.CapabilityForHostMethod(hostMethodAssetsGetBytes),
