@@ -81,12 +81,14 @@ func (p *Plugin) runToolLoop(
 			return
 		}
 		logger.Warn("tool_loop_failed", sdk.LogFieldError, loopErr, "iterations", stats.iterations)
-		// 响应头已提交，只能以 SSE error 帧下发；成员分组白名单拒绝同样要给明确提示
+		// 响应头已提交，只能以 SSE error 帧下发；成员分组白名单拒绝同样要给明确提示。
+		// 码必须跟着文案走：帧里写死 upstream_error 会让前端按通用兜底句本地化，
+		// 把这条「管理员没授权该模型」的可执行提示抹掉（各语言都抹，英文也抹）。
 		if p.forwardErrorIsMemberGroupForbidden(ctx, loopErr, int64(parseUserID(r)), platform) {
-			writeSSEErrorFrame(w, chatErrMemberGroupForbidden)
+			writeSSEErrorFrame(w, chatErrMemberGroupForbidden, chatCodeMemberGroupForbidden)
 			return
 		}
-		writeSSEErrorFrame(w, chatErrUpstreamUnavailable)
+		writeSSEErrorFrame(w, chatErrUpstreamUnavailable, chatCodeUpstreamUnavailable)
 		return
 	}
 
@@ -99,9 +101,11 @@ func (p *Plugin) runToolLoop(
 	)
 }
 
-func writeSSEErrorFrame(w http.ResponseWriter, message string) {
+// writeSSEErrorFrame 在响应头已提交后以 SSE error 帧下发错误。code 必须与 message 匹配
+// （见 chatCode* 常量组）：前端按 code 决定是否用本地化文案替换 message。
+func writeSSEErrorFrame(w http.ResponseWriter, message, code string) {
 	_ = sseWriter{w: w}.writeJSON(map[string]any{
-		"error": map[string]any{"message": message, "type": "server_error", "code": "upstream_error"},
+		"error": map[string]any{"message": message, "type": "server_error", "code": code},
 	})
 	flushIfPossible(w)
 }

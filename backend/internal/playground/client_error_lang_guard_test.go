@@ -62,23 +62,10 @@ var clientFacingVarNames = map[string]bool{
 	"text":    true,
 }
 
-// errorConstructorFiles：这些文件里的 fmt.Errorf / errors.New 文案最终经 err.Error()
-// 回放给客户（writeJSON(map{"error": err.Error()}) / ForModel + err.Error() 等）。
-var errorConstructorFiles = map[string]bool{
-	"direct_export.go":              true,
-	"host_api.go":                   true,
-	"markdown_render.go":            true,
-	"office_renderer.go":            true,
-	"pdf_renderer.go":               true,
-	"routes.go":                     true,
-	"service.go":                    true,
-	"tavily.go":                     true,
-	"tool_generate_document.go":     true,
-	"tool_generate_presentation.go": true,
-	"tool_generate_spreadsheet.go":  true,
-	"tool_loop.go":                  true,
-	"tool_web_search.go":            true,
-}
+// fmt.Errorf / errors.New 的文案最终会经 err.Error() 回放进客户可见位置，因此**全量**
+// 检查——不再维护「哪些文件要查」的白名单。白名单是 opt-in 的，新建的文件默认不设防，
+// 加一个新 handler 就能悄悄漏一句中文出去；这里改成 fail-closed：所有被扫描的文件都查，
+// 只有 adminOnlyFiles 整体豁免。
 
 // adminOnlyFiles / isAdminOnlyFunc：只面向后台管理员的文案，不经 API 回放给终端用户。
 var adminOnlyFiles = map[string]bool{
@@ -122,7 +109,7 @@ func TestClientFacingStringsMustBeEnglish(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
-		violations = append(violations, scanFileForHan(fset, name, file)...)
+		violations = append(violations, scanFileForHan(fset, file)...)
 	}
 	if len(violations) > 0 {
 		t.Fatalf("client-facing strings must be English (localization happens in web/src/playground/chatErrors.ts by error code):\n  %s",
@@ -130,7 +117,7 @@ func TestClientFacingStringsMustBeEnglish(t *testing.T) {
 	}
 }
 
-func scanFileForHan(fset *token.FileSet, name string, file *ast.File) []string {
+func scanFileForHan(fset *token.FileSet, file *ast.File) []string {
 	var violations []string
 	report := func(node ast.Node, why string) {
 		violations = append(violations, fset.Position(node.Pos()).String()+": "+why)
@@ -147,7 +134,7 @@ func scanFileForHan(fset *token.FileSet, name string, file *ast.File) []string {
 			switch node := n.(type) {
 			case *ast.CallExpr:
 				callee := calleeName(node.Fun)
-				isErrorCtor := errorConstructorFiles[name] && (callee == "fmt.Errorf" || callee == "errors.New")
+				isErrorCtor := callee == "fmt.Errorf" || callee == "errors.New"
 				if !clientFacingCalls[callee] && !isErrorCtor {
 					return true
 				}
@@ -206,38 +193,122 @@ func scanFileForHan(fset *token.FileSet, name string, file *ast.File) []string {
 	return violations
 }
 
-// collectHanIdents 收集包内声明值含汉字的 const/var 名字（含函数内的 := 与 var）。
+// collectHanIdents 收集"取值会带汉字"的标识符：
+//   - 声明值直接含汉字字面量的 const/var（含函数内的 := 与 var）；
+//   - 直接 return 汉字字符串的函数名（形态 b：把汉字藏进 helper 再喂给 emitter）；
+//   - 以及从上面两类**多跳**传递过来的变量（形态 a：常量 → 局部变量 → emitter）。
+//
+// 传递用不动点迭代，直到没有新的标识符被污染为止。allowedHanIdents 里的标识符不作为
+// 传播源——它们是刻意保留的中文（判别串 / 存量数据字面值），不该把下游变量也染红。
 func collectHanIdents(file *ast.File) map[string]bool {
 	out := map[string]bool{}
+
+	// 形态 (b)：func f() string { return "中文" }。只看 return 表达式里**直接**可见的
+	// 字符串（含拼接与 fmt.Sprintf），不下钻复合字面量——否则内容目录类文件（如
+	// studio 的 inspirations.go）会被整片误判。
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			ret, ok := n.(*ast.ReturnStmt)
+			if !ok {
+				return true
+			}
+			for _, res := range ret.Results {
+				for _, lit := range directStringLiterals(res) {
+					if containsHan(lit.value) {
+						out[fn.Name.Name] = true
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	// 形态 (a) 的种子：声明值直接含汉字。
+	assignments := collectAssignments(file)
+	for _, a := range assignments {
+		for _, lit := range stringLiterals(a.rhs) {
+			if containsHan(lit.value) {
+				out[a.name] = true
+			}
+		}
+	}
+
+	// 形态 (a) 的传播：RHS 引用了已被污染的标识符 → LHS 同样被污染。不动点迭代。
+	for changed := true; changed; {
+		changed = false
+		for _, a := range assignments {
+			if out[a.name] {
+				continue
+			}
+			for _, id := range identifiers(a.rhs) {
+				if out[id.Name] && !allowedHanIdents[id.Name] {
+					out[a.name] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+type assignment struct {
+	name string
+	rhs  ast.Expr
+}
+
+// collectAssignments 收集所有"标识符 = 表达式"（const/var 声明与函数内的 := / =）。
+func collectAssignments(file *ast.File) []assignment {
+	var out []assignment
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.ValueSpec:
 			for i, id := range node.Names {
-				if i >= len(node.Values) {
-					continue
-				}
-				for _, lit := range stringLiterals(node.Values[i]) {
-					if containsHan(lit.value) {
-						out[id.Name] = true
-					}
+				if i < len(node.Values) {
+					out = append(out, assignment{name: id.Name, rhs: node.Values[i]})
 				}
 			}
 		case *ast.AssignStmt:
 			for i, lhs := range node.Lhs {
-				id, ok := lhs.(*ast.Ident)
-				if !ok || i >= len(node.Rhs) {
-					continue
-				}
-				for _, lit := range stringLiterals(node.Rhs[i]) {
-					if containsHan(lit.value) {
-						out[id.Name] = true
-					}
+				if id, ok := lhs.(*ast.Ident); ok && i < len(node.Rhs) {
+					out = append(out, assignment{name: id.Name, rhs: node.Rhs[i]})
 				}
 			}
 		}
 		return true
 	})
 	return out
+}
+
+// directStringLiterals 只取表达式里**直接**构成字符串值的字面量：字面量本身、括号、
+// a + b 拼接、以及 fmt.Sprintf/Errorf 之类调用的实参。刻意不下钻复合字面量
+// （[]T{...} / map[...]{...} / T{...}），那是数据而不是这个表达式的返回文案。
+func directStringLiterals(expr ast.Expr) []stringLiteral {
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		if e.Kind == token.STRING {
+			value, err := strconv.Unquote(e.Value)
+			if err != nil {
+				value = e.Value
+			}
+			return []stringLiteral{{node: e, value: value}}
+		}
+	case *ast.ParenExpr:
+		return directStringLiterals(e.X)
+	case *ast.BinaryExpr:
+		return append(directStringLiterals(e.X), directStringLiterals(e.Y)...)
+	case *ast.CallExpr:
+		var out []stringLiteral
+		for _, arg := range e.Args {
+			out = append(out, directStringLiterals(arg)...)
+		}
+		return out
+	}
+	return nil
 }
 
 func calleeName(expr ast.Expr) string {
