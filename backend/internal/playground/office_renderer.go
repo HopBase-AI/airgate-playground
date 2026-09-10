@@ -59,7 +59,7 @@ func (r *officeRenderer) RenderPPTX(ctx context.Context, input presentationInput
 
 func (r *officeRenderer) render(ctx context.Context, path string, payload any) ([]byte, error) {
 	if r == nil {
-		return nil, fmt.Errorf("Office renderer 未配置")
+		return nil, fmt.Errorf("office renderer is not configured")
 	}
 	select {
 	case r.sem <- struct{}{}:
@@ -78,7 +78,7 @@ func (r *officeRenderer) render(ctx context.Context, path string, payload any) (
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Office renderer 请求失败: %w", err)
+		return nil, fmt.Errorf("office renderer request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxOfficeRendererResponseBytes+1))
@@ -86,7 +86,7 @@ func (r *officeRenderer) render(ctx context.Context, path string, payload any) (
 		return nil, err
 	}
 	if len(data) > maxOfficeRendererResponseBytes {
-		return nil, fmt.Errorf("Office renderer 输出超过 20MB")
+		return nil, fmt.Errorf("office renderer output exceeds 20MB")
 	}
 	if resp.StatusCode != http.StatusOK {
 		var apiErr struct {
@@ -96,10 +96,10 @@ func (r *officeRenderer) render(ctx context.Context, path string, payload any) (
 		if apiErr.Error == "" {
 			apiErr.Error = http.StatusText(resp.StatusCode)
 		}
-		return nil, fmt.Errorf("Office renderer 返回 %d: %s", resp.StatusCode, apiErr.Error)
+		return nil, fmt.Errorf("office renderer returned %d: %s", resp.StatusCode, apiErr.Error)
 	}
 	if len(data) < 4 || !bytes.Equal(data[:2], []byte("PK")) {
-		return nil, fmt.Errorf("Office renderer 返回的文件签名无效")
+		return nil, fmt.Errorf("office renderer returned a file with an invalid signature")
 	}
 	return data, nil
 }

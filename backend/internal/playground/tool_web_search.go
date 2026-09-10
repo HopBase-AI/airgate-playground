@@ -51,11 +51,11 @@ func (t *webSearchTool) Execute(ctx context.Context, tc *toolContext, args json.
 		MaxResults int    `json:"max_results"`
 	}
 	if err := json.Unmarshal(args, &input); err != nil || strings.TrimSpace(input.Query) == "" {
-		return &toolOutcome{ForModel: "web_search 参数无效:需要非空 query 字符串", IsError: true}, nil
+		return &toolOutcome{ForModel: "web_search arguments are invalid: a non-empty query string is required", IsError: true}, nil
 	}
 	if limit := int32(t.maxPerMessage); limit > 0 && t.used.Add(1) > limit {
 		return &toolOutcome{
-			ForModel: fmt.Sprintf("已达到本条消息的搜索次数上限(%d 次),请基于已获得的信息作答", t.maxPerMessage),
+			ForModel: fmt.Sprintf("Search limit for this message reached (%d searches). Answer with the information you already have.", t.maxPerMessage),
 			IsError:  true,
 		}, nil
 	}
@@ -66,7 +66,7 @@ func (t *webSearchTool) Execute(ctx context.Context, tc *toolContext, args json.
 	if err != nil {
 		tc.logger.Warn("web_search_failed", "provider", t.provider.Name(), "error", err)
 		return &toolOutcome{
-			ForModel: "web_search 暂不可用(" + truncateForModel(err.Error(), 200) + ")。请基于已有知识回答,并明确说明未能联网核实。",
+			ForModel: "web_search is unavailable (" + truncateForModel(err.Error(), 200) + "). Answer from your existing knowledge and state clearly that you could not verify it online.",
 			IsError:  true,
 		}, nil
 	}

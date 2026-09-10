@@ -86,7 +86,7 @@ func (p *Plugin) runToolLoop(
 			writeSSEErrorFrame(w, chatErrMemberGroupForbidden)
 			return
 		}
-		writeSSEErrorFrame(w, "请求暂时无法完成，请稍后重试")
+		writeSSEErrorFrame(w, chatErrUpstreamUnavailable)
 		return
 	}
 
@@ -413,7 +413,7 @@ func (p *Plugin) executeToolCalls(
 	for _, call := range calls {
 		if ctx.Err() != nil {
 			p.auditToolCall(tc, stats.iterations, call, "cancelled", "", 0, 0)
-			results = append(results, toolExecResult{call: call, outcome: &toolOutcome{ForModel: "请求已取消", IsError: true}})
+			results = append(results, toolExecResult{call: call, outcome: &toolOutcome{ForModel: "Request cancelled.", IsError: true}})
 			continue
 		}
 		stats.toolCalls++
@@ -429,13 +429,13 @@ func (p *Plugin) executeToolCalls(
 		began := time.Now()
 		var outcome *toolOutcome
 		if tool == nil {
-			outcome = &toolOutcome{ForModel: "未知工具: " + call.Name, IsError: true}
+			outcome = &toolOutcome{ForModel: "Unknown tool: " + call.Name, IsError: true}
 		} else {
 			var execErr error
 			outcome, execErr = tool.Execute(ctx, tc, call.Args)
 			if execErr != nil || outcome == nil {
 				logger.Warn("tool_execute_failed", "tool", call.Name, sdk.LogFieldError, execErr)
-				outcome = &toolOutcome{ForModel: "工具执行失败,请基于已有信息作答", IsError: true}
+				outcome = &toolOutcome{ForModel: "Tool execution failed. Answer with the information you already have.", IsError: true}
 			}
 		}
 		duration := time.Since(began)

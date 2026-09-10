@@ -99,7 +99,7 @@ var docShellTemplate = template.Must(template.New("doc").Parse(`<!DOCTYPE html>
 func renderDocumentHTML(title string, markdown []byte) ([]byte, error) {
 	var converted bytes.Buffer
 	if err := docMarkdown.Convert(markdown, &converted); err != nil {
-		return nil, fmt.Errorf("markdown 渲染失败: %w", err)
+		return nil, fmt.Errorf("markdown render failed: %w", err)
 	}
 	safe := docSanitizer.SanitizeBytes(converted.Bytes())
 

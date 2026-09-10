@@ -187,7 +187,7 @@ func inferSpreadsheetColumn(values []string) (columnType, format string) {
 
 func markdownToSpreadsheet(title, content string) (spreadsheetInput, error) {
 	if strings.TrimSpace(content) == "" {
-		return spreadsheetInput{}, fmt.Errorf("消息内容为空，无法导出 Excel")
+		return spreadsheetInput{}, fmt.Errorf("message content is empty, nothing to export to Excel")
 	}
 	tables := markdownTables(content)
 	if len(tables) == 0 {
@@ -200,18 +200,18 @@ func markdownToSpreadsheet(title, content string) (spreadsheetInput, error) {
 			rows = append(rows, []any{strings.TrimSpace(content)})
 		}
 		return spreadsheetInput{Title: title, Sheets: []spreadsheetSheet{{
-			Name: "内容", Columns: []spreadsheetColumn{{Header: "内容", Type: "string", Width: 60}}, Rows: rows,
+			Name: "Content", Columns: []spreadsheetColumn{{Header: "Content", Type: "string", Width: 60}}, Rows: rows,
 		}}}, nil
 	}
 	sheets := make([]spreadsheetSheet, 0, len(tables))
 	for i, table := range tables {
 		if len(table.Headers) > maxSpreadsheetColumns {
-			return spreadsheetInput{}, fmt.Errorf("第 %d 个表格列数超过 %d", i+1, maxSpreadsheetColumns)
+			return spreadsheetInput{}, fmt.Errorf("table %d has more than %d columns", i+1, maxSpreadsheetColumns)
 		}
 		columns := make([]spreadsheetColumn, len(table.Headers))
 		for j, header := range table.Headers {
 			if strings.TrimSpace(header) == "" {
-				header = fmt.Sprintf("列 %d", j+1)
+				header = fmt.Sprintf("Column %d", j+1)
 			}
 			values := make([]string, 0, len(table.Rows))
 			for _, row := range table.Rows {
@@ -271,12 +271,12 @@ func splitPresentationText(value string, limit int) []string {
 
 func markdownToPresentation(title, content string) (presentationInput, error) {
 	if strings.TrimSpace(content) == "" {
-		return presentationInput{}, fmt.Errorf("消息内容为空，无法导出 PowerPoint")
+		return presentationInput{}, fmt.Errorf("message content is empty, nothing to export to PowerPoint")
 	}
 	source := []byte(content)
 	root := markdownAST(content)
 	slides := []presentationSlide{{Kind: "title", Title: title}}
-	currentTitle := "要点"
+	currentTitle := "Highlights"
 	currentBullets := make([]string, 0, maxPresentationBullets)
 	flush := func() {
 		if len(currentBullets) == 0 {
@@ -318,7 +318,7 @@ func markdownToPresentation(title, content string) (presentationInput, error) {
 			flush()
 			table := markdownTableFromNode(block, source)
 			if len(table.Headers) == 0 {
-				return fmt.Errorf("PowerPoint 表格缺少表头")
+				return fmt.Errorf("PowerPoint table has no header row")
 			}
 			validTable := len(table.Headers) <= maxPresentationTableCols
 			for _, cell := range append(append([]string(nil), table.Headers...), flattenTableRows(table.Rows)...) {
@@ -343,7 +343,7 @@ func markdownToPresentation(title, content string) (presentationInput, error) {
 				end := min(start+maxPresentationTableRows, len(table.Rows))
 				subtitle := ""
 				if parts > 1 {
-					subtitle = fmt.Sprintf("第 %d/%d 部分", start/maxPresentationTableRows+1, parts)
+					subtitle = fmt.Sprintf("Part %d/%d", start/maxPresentationTableRows+1, parts)
 				}
 				slides = append(slides, presentationSlide{
 					Kind: "table", Title: currentTitle, Subtitle: subtitle,
@@ -367,7 +367,7 @@ func markdownToPresentation(title, content string) (presentationInput, error) {
 	}
 	flush()
 	if len(slides) > maxPresentationSlides {
-		return presentationInput{}, fmt.Errorf("内容需要 %d 页，超过 %d 页上限", len(slides), maxPresentationSlides)
+		return presentationInput{}, fmt.Errorf("content needs %d slides, over the %d slide limit", len(slides), maxPresentationSlides)
 	}
 	return presentationInput{Title: title, Slides: slides}, nil
 }

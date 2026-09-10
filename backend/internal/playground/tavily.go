@@ -89,11 +89,11 @@ func (c *tavilyClient) Search(ctx context.Context, query string, opts searchOpti
 			continue
 		}
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("tavily 上游 %d", resp.StatusCode)
+			lastErr = fmt.Errorf("tavily upstream %d", resp.StatusCode)
 			continue // 5xx 重试一次
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("tavily 返回 %d: %s", resp.StatusCode, truncateForModel(string(body), 200))
+			return nil, fmt.Errorf("tavily returned %d: %s", resp.StatusCode, truncateForModel(string(body), 200))
 		}
 		var parsed struct {
 			Results []struct {
@@ -103,7 +103,7 @@ func (c *tavilyClient) Search(ctx context.Context, query string, opts searchOpti
 			} `json:"results"`
 		}
 		if err := json.Unmarshal(body, &parsed); err != nil {
-			return nil, fmt.Errorf("tavily 响应解析失败: %w", err)
+			return nil, fmt.Errorf("tavily response parse failed: %w", err)
 		}
 		out := &searchResponse{}
 		for _, r := range parsed.Results {

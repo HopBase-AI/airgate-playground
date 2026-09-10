@@ -29,7 +29,7 @@ const (
 	maxChatForwardBodyBytes = 30 << 20
 )
 
-var errChatBodyTooLarge = errors.New("会话内容过大：历史图片与附件展开后超过 30MB，请减少图片数量或新建会话后重试")
+var errChatBodyTooLarge = errors.New("Conversation payload too large: history images and attachments exceed 30MB after expansion. Remove some images or start a new conversation.")
 
 func validateChatForwardBodySize(size int) error {
 	if size > maxChatForwardBodyBytes {
@@ -664,7 +664,7 @@ func (p *Plugin) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			p.writeChatForwardError(ctx, w, res.err, int64(parseUserID(r)), plan.Platform)
 			return
 		}
-		_, _ = w.Write([]byte("data: {\"error\":{\"message\":\"请求暂时无法完成，请稍后重试\",\"type\":\"server_error\",\"code\":\"upstream_error\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"error\":{\"message\":\"The request could not be completed. Please try again later.\",\"type\":\"server_error\",\"code\":\"upstream_error\"}}\n\n"))
 		return
 	}
 	if res.failStatus > 0 {
@@ -957,11 +957,23 @@ func writeOpenAIError(w http.ResponseWriter, status int, errType, code, message 
 	})
 }
 
-// chatErrMemberGroupForbidden 企业成员选了白名单外分组才能路由到的模型时的用户提示。
-const chatErrMemberGroupForbidden = "企业管理员未授予该模型的使用权限，请联系企业管理员或换一个模型"
+// 客户可见文案一律英文：AI Chat 面向多语言用户，中文文案会直接漏给西语/英语客户。
+// 本地化由 core 按 Accept-Language + error code 完成，插件只产英文。
+const (
+	// chatErrMemberGroupForbidden 企业成员选了白名单外分组才能路由到的模型时的用户提示。
+	chatErrMemberGroupForbidden = "Your organization administrator has not granted access to this model. Contact your administrator or pick another model."
+	// chatErrUpstreamUnavailable 上游不可用/未知错误时的通用提示。
+	chatErrUpstreamUnavailable = "The request could not be completed. Please try again later."
+	// chatErrInvalidRequest core 判定参数非法但没有给出具体原因时的兜底提示。
+	chatErrInvalidRequest = "The request could not be completed. Check the request parameters and try again."
+	// chatErrInsufficientBalance 余额不足。
+	chatErrInsufficientBalance = "Insufficient balance."
+)
 
 // memberGroupForbiddenHint core 拒绝成员使用白名单外分组时的错误文案片段
 // （auth.ErrMemberGroupForbidden＝"所属团队成员无权使用该分组"）。插件不能 import core，只能按文案识别。
+// ⚠️ 这是匹配 core 内部错误文本的**判别串**，不是回给客户的文案，必须与 core 保持一致，
+// 不可英文化（英文化会让成员分组白名单拒绝退化成通用 upstream_error）。
 const memberGroupForbiddenHint = "无权使用该分组"
 
 // isMemberGroupForbiddenError 判断 core 是否因成员分组白名单显式拒绝了转发（PermissionDenied）。
@@ -998,20 +1010,20 @@ func (p *Plugin) writeChatForwardError(ctx context.Context, w http.ResponseWrite
 func writeHostForwardError(w http.ResponseWriter, err error) {
 	s, ok := status.FromError(err)
 	if !ok {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "upstream_error", "请求暂时无法完成，请稍后重试")
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "upstream_error", chatErrUpstreamUnavailable)
 		return
 	}
 	switch s.Code() {
 	case codes.InvalidArgument:
 		msg := s.Message()
 		if msg == "" {
-			msg = "请求无法完成，请检查输入后重试"
+			msg = chatErrInvalidRequest
 		}
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", msg)
 	case codes.ResourceExhausted:
-		writeOpenAIError(w, http.StatusPaymentRequired, "insufficient_quota", "insufficient_quota", "余额不足")
+		writeOpenAIError(w, http.StatusPaymentRequired, "insufficient_quota", "insufficient_quota", chatErrInsufficientBalance)
 	default:
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "upstream_error", "请求暂时无法完成，请稍后重试")
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "upstream_error", chatErrUpstreamUnavailable)
 	}
 }
 

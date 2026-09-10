@@ -590,7 +590,7 @@ func TestWebSearchToolLimitAndErrors(t *testing.T) {
 		t.Fatalf("ForClient = %+v", out.ForClient)
 	}
 	out, _ = tool.Execute(context.Background(), tc, json.RawMessage(`{"query":"b"}`))
-	if !out.IsError || !strings.Contains(out.ForModel, "上限") {
+	if !out.IsError || !strings.Contains(out.ForModel, "Search limit for this message reached") {
 		t.Fatalf("second search should hit limit: %+v", out)
 	}
 	out, _ = tool.Execute(context.Background(), tc, json.RawMessage(`{}`))

@@ -148,7 +148,9 @@ export interface ChatCompletionCallbacks {
   onReasoning: (text: string) => void;
   onToolEvent?: (event: 'tool_call_started' | 'tool_call_finished', iteration: number, call: ToolEventCall) => void;
   onDone: (result: { input_tokens: number; output_tokens: number; model: string; cost: number; model_cost: number; render_fee: number; finish_reason: string; stop_reason: string }) => void | Promise<void>;
-  onError: (err: string) => void;
+  // code 为网关错误体里的机器码（upstream_error / invalid_request / insufficient_quota /
+  // member_group_forbidden 等）；后端文案一律英文，由前端按 code 本地化。
+  onError: (err: string, code?: string) => void;
 }
 
 // ── API ──
@@ -191,7 +193,7 @@ export const api = {
 // SSE chunk 的最小类型契约:字段全可选,消费侧显式兜底。
 // JSON.parse 出来的 any 一律先收进这个类型再用,别让 any 直接流进回调。
 interface StreamChunk {
-  error?: string | { message?: string };
+  error?: string | { message?: string; code?: string };
   object?: string;
   event?: 'tool_call_started' | 'tool_call_finished';
   iteration?: number;
@@ -239,14 +241,16 @@ export async function chatCompletionsStream(
   if (!resp.ok || !resp.body) {
     const text = await resp.text();
     let msg = `HTTP ${resp.status}`;
+    let code: string | undefined;
     try {
       const parsed = JSON.parse(text);
       msg = parsed.error?.message || parsed.error || parsed.message || msg;
+      code = typeof parsed.error?.code === 'string' ? parsed.error.code : undefined;
     } catch { /* ignore */ }
     if (resp.status === 401) {
       clearStoredTokenAndRedirect();
     }
-    callbacks.onError(msg);
+    callbacks.onError(msg, code);
     return;
   }
 
@@ -277,7 +281,8 @@ export async function chatCompletionsStream(
           const parsed = JSON.parse(payload) as StreamChunk;
           if (parsed.error) {
             const errText = typeof parsed.error === 'string' ? parsed.error : parsed.error.message;
-            callbacks.onError(errText || 'stream failed');
+            const errCode = typeof parsed.error === 'string' ? undefined : parsed.error.code;
+            callbacks.onError(errText || 'stream failed', errCode);
             return;
           }
           // 工具循环事件：与 OpenAI chunk 用 object 字段区分，参数不做流式增量。

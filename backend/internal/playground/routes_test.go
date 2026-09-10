@@ -156,7 +156,7 @@ func TestWriteHostForwardErrorUnavailable(t *testing.T) {
 	if strings.Contains(body, "upstream exploded") {
 		t.Fatalf("body = %q, want sanitized upstream error", body)
 	}
-	if !strings.Contains(body, "请求暂时无法完成，请稍后重试") {
+	if !strings.Contains(body, "The request could not be completed. Please try again later.") {
 		t.Fatalf("body = %q, want generic retry message", body)
 	}
 }
