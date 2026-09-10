@@ -29,7 +29,7 @@ const (
 	maxChatForwardBodyBytes = 30 << 20
 )
 
-var errChatBodyTooLarge = errors.New("会话内容过大：历史图片与附件展开后超过 30MB，请减少图片数量或新建会话后重试")
+var errChatBodyTooLarge = errors.New("Conversation payload too large: history images and attachments exceed 30MB after expansion. Remove some images or start a new conversation.")
 
 func validateChatForwardBodySize(size int) error {
 	if size > maxChatForwardBodyBytes {
@@ -426,7 +426,7 @@ func (p *Plugin) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 先拒掉，省去整份 JSON 解析、资产拉取与 base64 编码。
 	if err := validateChatForwardBodySize(len(body)); err != nil {
 		logger.Warn("chat_forward_body_too_large", "body_bytes", len(body), "stage", "raw")
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "request_too_large", err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", chatCodeRequestTooLarge, err.Error())
 		return
 	}
 	body, err = p.rewriteChatImageAssetURLs(ctx, body)
@@ -437,7 +437,7 @@ func (p *Plugin) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateChatForwardBodySize(len(body)); err != nil {
 		logger.Warn("chat_forward_body_too_large", "body_bytes", len(body), "stage", "expanded")
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "request_too_large", err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", chatCodeRequestTooLarge, err.Error())
 		return
 	}
 	opts := defaultCompileOpts()
@@ -664,7 +664,7 @@ func (p *Plugin) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			p.writeChatForwardError(ctx, w, res.err, int64(parseUserID(r)), plan.Platform)
 			return
 		}
-		_, _ = w.Write([]byte("data: {\"error\":{\"message\":\"请求暂时无法完成，请稍后重试\",\"type\":\"server_error\",\"code\":\"upstream_error\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"error\":{\"message\":\"The request could not be completed. Please try again later.\",\"type\":\"server_error\",\"code\":\"hopbase_upstream_unavailable\"}}\n\n"))
 		return
 	}
 	if res.failStatus > 0 {
@@ -957,17 +957,65 @@ func writeOpenAIError(w http.ResponseWriter, status int, errType, code, message 
 	})
 }
 
-// chatErrMemberGroupForbidden 企业成员选了白名单外分组才能路由到的模型时的用户提示。
-const chatErrMemberGroupForbidden = "企业管理员未授予该模型的使用权限，请联系企业管理员或换一个模型"
+// 客户可见文案一律英文：AI Chat 面向多语言用户，中文文案会直接漏给西语/英语客户。
+// 展示层本地化在插件自己的前端按 error code 完成（web/src/playground/chatErrors.ts）。
+const (
+	// chatErrMemberGroupForbidden 企业成员选了白名单外分组才能路由到的模型时的用户提示。
+	chatErrMemberGroupForbidden = "Your organization administrator has not granted access to this model. Contact your administrator or pick another model."
+	// chatErrUpstreamUnavailable 上游不可用/未知错误时的通用提示。
+	chatErrUpstreamUnavailable = "The request could not be completed. Please try again later."
+	// chatErrInvalidRequest core 判定参数非法但**没有给出具体原因**时的兜底提示。
+	// 有具体原因时一律原样回放 core 的文案，不要换成这一条。
+	chatErrInvalidRequest = "The request could not be completed. Check the request parameters and try again."
+	// chatErrInsufficientBalance 余额不足。
+	chatErrInsufficientBalance = "Insufficient balance."
+)
 
-// memberGroupForbiddenHint core 拒绝成员使用白名单外分组时的错误文案片段
-// （auth.ErrMemberGroupForbidden＝"所属团队成员无权使用该分组"）。插件不能 import core，只能按文案识别。
-const memberGroupForbiddenHint = "无权使用该分组"
+// ── 错误码命名空间 ───────────────────────────────────────────────────────────
+// hopbase_ 前缀标记「本插件自己产的、文案是固定兜底句」的错误：只有这些码允许被前端
+// 按界面语言替换成本地化文案（web/src/playground/chatErrors.ts）。
+//
+// 两条红线，都是踩过的坑：
+//  1. 上游错误体是**原样透传**的（见 handleChatCompletions 里 res.failBody 分支）。
+//     OpenAI 兼容上游用裸 code "insufficient_quota" 表示**上游账号**欠费，用
+//     "invalid_request_error" 表示上游参数问题；如果前端按裸码本地化，就会把
+//     「上游账号欠费」显示成「你的 HopBase 余额不足，请充值」——定责定反。
+//     加了命名空间之后，透传体的裸码永远命不中字典，原文照显。
+//  2. 带具体原因的错误（core 的 InvalidArgument reason、编译期校验的 err.Error()）
+//     必须保留原码 invalid_request 且**不进字典**，否则具体信息会被通用兜底句盖掉。
+const (
+	chatCodeUpstreamUnavailable  = "hopbase_upstream_unavailable"
+	chatCodeInvalidRequest       = "hopbase_invalid_request"
+	chatCodeInsufficientBalance  = "hopbase_insufficient_balance"
+	chatCodeMemberGroupForbidden = "hopbase_member_group_forbidden"
+	chatCodeRequestTooLarge      = "hopbase_request_too_large"
+)
+
+// memberGroupForbiddenHints core 拒绝成员使用白名单外分组时的错误文案片段。
+// 插件不能 import core，只能按文案识别，所以这里是**判别串**而非对外文案——
+// 它们必须跟着 core 的实际输出走，不能按"对外一律英文"的纪律去改。
+//
+// 两条都要留：core 2026-09-10 起把该错误改成英文（gw.member_group_forbidden＝
+// "This member is not allowed to use the group bound to this API key"），
+// 但线上回滚到旧 core 时仍是中文（auth.ErrMemberGroupForbidden＝"所属团队成员无权使用该分组"）。
+// 只认其中一条，另一形态就会退化成通用 upstream_error，成员分组白名单的拒绝理由丢失。
+var memberGroupForbiddenHints = []string{
+	"not allowed to use the group",
+	"无权使用该分组",
+}
 
 // isMemberGroupForbiddenError 判断 core 是否因成员分组白名单显式拒绝了转发（PermissionDenied）。
 func isMemberGroupForbiddenError(err error) bool {
 	s, ok := status.FromError(err)
-	return ok && s.Code() == codes.PermissionDenied && strings.Contains(s.Message(), memberGroupForbiddenHint)
+	if !ok || s.Code() != codes.PermissionDenied {
+		return false
+	}
+	for _, hint := range memberGroupForbiddenHints {
+		if strings.Contains(s.Message(), hint) {
+			return true
+		}
+	}
+	return false
 }
 
 // forwardErrorIsMemberGroupForbidden 把两种形态的"成员无权用该模型"归一：
@@ -989,7 +1037,7 @@ func (p *Plugin) forwardErrorIsMemberGroupForbidden(ctx context.Context, err err
 // writeChatForwardError 在通用映射之前先识别成员分组白名单拒绝，给出可操作的提示。
 func (p *Plugin) writeChatForwardError(ctx context.Context, w http.ResponseWriter, err error, userID int64, platform string) {
 	if p.forwardErrorIsMemberGroupForbidden(ctx, err, userID, platform) {
-		writeOpenAIError(w, http.StatusForbidden, "permission_error", "member_group_forbidden", chatErrMemberGroupForbidden)
+		writeOpenAIError(w, http.StatusForbidden, "permission_error", chatCodeMemberGroupForbidden, chatErrMemberGroupForbidden)
 		return
 	}
 	writeHostForwardError(w, err)
@@ -998,20 +1046,23 @@ func (p *Plugin) writeChatForwardError(ctx context.Context, w http.ResponseWrite
 func writeHostForwardError(w http.ResponseWriter, err error) {
 	s, ok := status.FromError(err)
 	if !ok {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "upstream_error", "请求暂时无法完成，请稍后重试")
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", chatCodeUpstreamUnavailable, chatErrUpstreamUnavailable)
 		return
 	}
 	switch s.Code() {
 	case codes.InvalidArgument:
-		msg := s.Message()
-		if msg == "" {
-			msg = "请求无法完成，请检查输入后重试"
+		// core 给了具体原因就原样回放，并保留原码 invalid_request——该码不在前端字典里，
+		// 展示层原样显示，具体信息不会被通用兜底句盖掉。只有 core 什么都没说时，
+		// 才用 hopbase_ 命名空间的兜底码，让前端按界面语言出通用提示。
+		if msg := s.Message(); msg != "" {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", msg)
+			return
 		}
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", msg)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", chatCodeInvalidRequest, chatErrInvalidRequest)
 	case codes.ResourceExhausted:
-		writeOpenAIError(w, http.StatusPaymentRequired, "insufficient_quota", "insufficient_quota", "余额不足")
+		writeOpenAIError(w, http.StatusPaymentRequired, "insufficient_quota", chatCodeInsufficientBalance, chatErrInsufficientBalance)
 	default:
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "upstream_error", "请求暂时无法完成，请稍后重试")
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", chatCodeUpstreamUnavailable, chatErrUpstreamUnavailable)
 	}
 }
 

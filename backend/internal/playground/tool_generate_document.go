@@ -93,23 +93,23 @@ func (t *generateDocumentTool) Execute(ctx context.Context, tc *toolContext, arg
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(args, &input); err != nil || strings.TrimSpace(input.Content) == "" || strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.Format) == "" {
-		return &toolOutcome{ForModel: "generate_document 参数无效:需要非空 title、format 与 content(Markdown)", IsError: true}, nil
+		return &toolOutcome{ForModel: "generate_document arguments are invalid: title, format and content (Markdown) must all be non-empty", IsError: true}, nil
 	}
 	if tc.conversationID <= 0 {
-		return &toolOutcome{ForModel: "当前请求缺少会话上下文,无法保存文档;请提示用户在会话中重试", IsError: true}, nil
+		return &toolOutcome{ForModel: "This request has no conversation context, so the document cannot be saved. Ask the user to retry inside a conversation.", IsError: true}, nil
 	}
 	if len(input.Content) > maxDocumentContentBytes {
-		return &toolOutcome{ForModel: fmt.Sprintf("文档内容过大(%dKB),上限 512KB;请精简后重试", len(input.Content)>>10), IsError: true}, nil
+		return &toolOutcome{ForModel: fmt.Sprintf("Document content is too large (%dKB); the limit is 512KB. Shorten it and retry.", len(input.Content)>>10), IsError: true}, nil
 	}
 	storage := t.plugin.svc.Storage()
 	if storage == nil {
-		return &toolOutcome{ForModel: "文档存储不可用", IsError: true}, nil
+		return &toolOutcome{ForModel: "Document storage is unavailable.", IsError: true}, nil
 	}
 
 	title := sanitizeDocumentTitle(input.Title)
 	format := strings.ToLower(strings.TrimSpace(input.Format))
 	if !t.supportsFormat(format) {
-		return &toolOutcome{ForModel: fmt.Sprintf("不支持格式 %q，可用格式：%s", format, strings.Join(t.supportedFormats(), ", ")), IsError: true}, nil
+		return &toolOutcome{ForModel: fmt.Sprintf("Unsupported format %q. Available formats: %s", format, strings.Join(t.supportedFormats(), ", ")), IsError: true}, nil
 	}
 
 	var deliver *StoredAsset
@@ -129,13 +129,13 @@ func (t *generateDocumentTool) Execute(ctx context.Context, tc *toolContext, arg
 	}
 	if err != nil {
 		tc.logger.Warn("generate_document_failed", "format", format, "error", err)
-		return &toolOutcome{ForModel: fmt.Sprintf("%s 文件生成失败：%v", strings.ToUpper(format), err), IsError: true}, nil
+		return &toolOutcome{ForModel: fmt.Sprintf("%s file generation failed: %v", strings.ToUpper(format), err), IsError: true}, nil
 	}
 	if format == "markdown" {
 		if err := t.plugin.svc.RegisterConversationAsset(ctx, int(tc.userID), tc.conversationID, deliver); err != nil {
 			tc.logger.Warn("generate_document_register_markdown_failed", "error", err)
 			_ = storage.Delete(ctx, deliver.ObjectKey)
-			return &toolOutcome{ForModel: "文档已生成但会话资产登记失败，请稍后重试", IsError: true}, nil
+			return &toolOutcome{ForModel: "The document was generated but registering it as a conversation asset failed. Please retry later.", IsError: true}, nil
 		}
 	}
 	var usage *sdk.Usage
@@ -143,7 +143,7 @@ func (t *generateDocumentTool) Execute(ctx context.Context, tc *toolContext, arg
 		usage, err = t.plugin.chargeRenderUsage(ctx, tc, format, deliver.ID, deliver.SizeBytes, 1)
 		if err != nil {
 			_ = t.plugin.svc.RemoveConversationAsset(ctx, int(tc.userID), tc.conversationID, deliver)
-			return &toolOutcome{ForModel: fmt.Sprintf("%s 已渲染但文件费用入账失败：%v", strings.ToUpper(format), err), IsError: true}, nil
+			return &toolOutcome{ForModel: fmt.Sprintf("%s was rendered but billing the file fee failed: %v", strings.ToUpper(format), err), IsError: true}, nil
 		}
 	}
 
@@ -158,13 +158,13 @@ func (t *generateDocumentTool) Execute(ctx context.Context, tc *toolContext, arg
 			"asset_uri": assetURI(deliver.ID),
 		},
 	}
-	forModel := fmt.Sprintf("已生成文档《%s》(%s, %dKB)并作为文件卡片交付给用户。",
+	forModel := fmt.Sprintf("Generated document %q (%s, %dKB) and delivered it to the user as a file card.",
 		title, strings.ToUpper(format), deliver.SizeBytes>>10)
 	return &toolOutcome{
 		ForModel:        forModel,
 		ForClient:       forClient,
 		Terminal:        true,
-		TerminalMessage: "文件已生成，可通过文件卡下载。",
+		TerminalMessage: "File generated. You can download it from the file card.",
 		Usage:           usage,
 	}, nil
 }
@@ -195,14 +195,14 @@ func stripDuplicateLeadingTitle(title, content string) string {
 func (t *generateDocumentTool) renderAndStoreDOCX(ctx context.Context, tc *toolContext, title, content string) (*StoredAsset, error) {
 	renderer := t.plugin.office
 	if renderer == nil || !renderer.Healthy(ctx) {
-		return nil, fmt.Errorf("Office renderer 不可达")
+		return nil, fmt.Errorf("office renderer is unreachable")
 	}
 	docx, err := renderer.RenderDOCX(ctx, title, content)
 	if err != nil {
 		return nil, err
 	}
 	if len(docx) > maxDocumentDOCXBytes {
-		return nil, fmt.Errorf("DOCX 超过 20MB 上限")
+		return nil, fmt.Errorf("DOCX exceeds the 20MB limit")
 	}
 	asset, err := t.plugin.svc.Storage().StoreDocumentBytes(ctx, int(tc.userID), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx", docx)
 	if err != nil {
@@ -211,7 +211,7 @@ func (t *generateDocumentTool) renderAndStoreDOCX(ctx context.Context, tc *toolC
 	if err := t.plugin.svc.RegisterConversationAsset(ctx, int(tc.userID), tc.conversationID, asset); err != nil {
 		tc.logger.Warn("generate_document_register_docx_failed", "error", err)
 		_ = t.plugin.svc.Storage().Delete(ctx, asset.ObjectKey)
-		return nil, fmt.Errorf("会话资产登记失败: %w", err)
+		return nil, fmt.Errorf("register conversation asset: %w", err)
 	}
 	return asset, nil
 }
@@ -219,10 +219,10 @@ func (t *generateDocumentTool) renderAndStoreDOCX(ctx context.Context, tc *toolC
 func (t *generateDocumentTool) renderAndStorePDF(ctx context.Context, tc *toolContext, title, content string) (*StoredAsset, error) {
 	renderer := t.plugin.pdf
 	if renderer == nil {
-		return nil, fmt.Errorf("pdf 渲染器未配置")
+		return nil, fmt.Errorf("pdf renderer is not configured")
 	}
 	if !renderer.Healthy(ctx) {
-		return nil, fmt.Errorf("chromium 边车不可达")
+		return nil, fmt.Errorf("chromium sidecar is unreachable")
 	}
 	html, err := renderDocumentHTML(title, []byte(content))
 	if err != nil {
@@ -233,7 +233,7 @@ func (t *generateDocumentTool) renderAndStorePDF(ctx context.Context, tc *toolCo
 		return nil, err
 	}
 	if len(pdf) > maxDocumentPDFBytes {
-		return nil, fmt.Errorf("pdf 超过 10MB 上限")
+		return nil, fmt.Errorf("pdf exceeds the 10MB limit")
 	}
 	asset, err := t.plugin.svc.Storage().StoreDocumentBytes(ctx, int(tc.userID), "application/pdf", ".pdf", pdf)
 	if err != nil {
@@ -242,7 +242,7 @@ func (t *generateDocumentTool) renderAndStorePDF(ctx context.Context, tc *toolCo
 	if err := t.plugin.svc.RegisterConversationAsset(ctx, int(tc.userID), tc.conversationID, asset); err != nil {
 		tc.logger.Warn("generate_document_register_pdf_failed", "error", err)
 		_ = t.plugin.svc.Storage().Delete(ctx, asset.ObjectKey)
-		return nil, fmt.Errorf("会话资产登记失败: %w", err)
+		return nil, fmt.Errorf("register conversation asset: %w", err)
 	}
 	return asset, nil
 }

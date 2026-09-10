@@ -590,11 +590,37 @@ func TestWebSearchToolLimitAndErrors(t *testing.T) {
 		t.Fatalf("ForClient = %+v", out.ForClient)
 	}
 	out, _ = tool.Execute(context.Background(), tc, json.RawMessage(`{"query":"b"}`))
-	if !out.IsError || !strings.Contains(out.ForModel, "上限") {
+	if !out.IsError || !strings.Contains(out.ForModel, "Search limit for this message reached") {
 		t.Fatalf("second search should hit limit: %+v", out)
 	}
 	out, _ = tool.Execute(context.Background(), tc, json.RawMessage(`{}`))
 	if !out.IsError {
 		t.Fatalf("empty query should be tool error: %+v", out)
+	}
+}
+
+// 2026-09-11 review 回归：SSE error 帧的 code 必须跟着 message 走。
+// 帧里写死 upstream_error 会让前端按通用兜底句本地化，把「管理员没授权该模型」
+// 这条可执行提示抹掉——每种语言都抹，英文也抹（playground#7/#8 的修复会被顶掉）。
+func TestWriteSSEErrorFrameCarriesMatchingCode(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	writeSSEErrorFrame(recorder, chatErrMemberGroupForbidden, chatCodeMemberGroupForbidden)
+	body := recorder.Body.String()
+	if !strings.Contains(body, chatErrMemberGroupForbidden) {
+		t.Fatalf("body = %q, want the specific member-group message", body)
+	}
+	if !strings.Contains(body, `"code":"`+chatCodeMemberGroupForbidden+`"`) {
+		t.Fatalf("body = %q, want code %q so the UI does not swap in the generic fallback", body, chatCodeMemberGroupForbidden)
+	}
+	if strings.Contains(body, chatCodeUpstreamUnavailable) {
+		t.Fatalf("body = %q, must not ship the specific message under the generic code", body)
+	}
+
+	recorder = httptest.NewRecorder()
+	writeSSEErrorFrame(recorder, chatErrUpstreamUnavailable, chatCodeUpstreamUnavailable)
+	if body := recorder.Body.String(); !strings.Contains(body, `"code":"`+chatCodeUpstreamUnavailable+`"`) {
+		t.Fatalf("body = %q, want %q", body, chatCodeUpstreamUnavailable)
 	}
 }

@@ -95,60 +95,60 @@ func (t *generateSpreadsheetTool) InputSchema() map[string]any {
 
 func (t *generateSpreadsheetTool) Execute(ctx context.Context, tc *toolContext, args json.RawMessage) (*toolOutcome, error) {
 	if len(args) > maxSpreadsheetArgsBytes {
-		return &toolOutcome{ForModel: "表格参数超过 4MB 上限，请减少数据量", IsError: true}, nil
+		return &toolOutcome{ForModel: "Spreadsheet arguments exceed the 4MB limit. Reduce the amount of data.", IsError: true}, nil
 	}
 	var input spreadsheetInput
 	decoder := json.NewDecoder(bytes.NewReader(args))
 	decoder.UseNumber()
 	if err := decoder.Decode(&input); err != nil {
-		return &toolOutcome{ForModel: "generate_spreadsheet 参数不是有效的 workbook 结构", IsError: true}, nil
+		return &toolOutcome{ForModel: "generate_spreadsheet arguments are not a valid workbook structure", IsError: true}, nil
 	}
 	if tc.conversationID <= 0 {
-		return &toolOutcome{ForModel: "当前请求缺少会话上下文，无法保存表格", IsError: true}, nil
+		return &toolOutcome{ForModel: "This request has no conversation context, so the spreadsheet cannot be saved.", IsError: true}, nil
 	}
 	data, err := renderSpreadsheet(input)
 	if err != nil {
-		return &toolOutcome{ForModel: "表格生成失败：" + err.Error(), IsError: true}, nil
+		return &toolOutcome{ForModel: "Spreadsheet generation failed: " + err.Error(), IsError: true}, nil
 	}
 	if len(data) > maxSpreadsheetBytes {
-		return &toolOutcome{ForModel: "生成的 XLSX 超过 20MB 上限，请减少数据量", IsError: true}, nil
+		return &toolOutcome{ForModel: "The generated XLSX exceeds the 20MB limit. Reduce the amount of data.", IsError: true}, nil
 	}
 	storage := t.plugin.svc.Storage()
 	if storage == nil {
-		return &toolOutcome{ForModel: "文档存储不可用", IsError: true}, nil
+		return &toolOutcome{ForModel: "Document storage is unavailable.", IsError: true}, nil
 	}
 	asset, err := storage.StoreDocumentBytes(ctx, int(tc.userID), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx", data)
 	if err != nil {
 		tc.logger.Warn("generate_spreadsheet_store_failed", "error", err)
-		return &toolOutcome{ForModel: "XLSX 保存失败，请稍后重试", IsError: true}, nil
+		return &toolOutcome{ForModel: "Saving the XLSX failed. Please retry later.", IsError: true}, nil
 	}
 	if err := t.plugin.svc.RegisterConversationAsset(ctx, int(tc.userID), tc.conversationID, asset); err != nil {
 		tc.logger.Warn("generate_spreadsheet_register_failed", "error", err)
 		_ = storage.Delete(ctx, asset.ObjectKey)
-		return &toolOutcome{ForModel: "XLSX 已生成但会话资产登记失败，请稍后重试", IsError: true}, nil
+		return &toolOutcome{ForModel: "The XLSX was generated but registering it as a conversation asset failed. Please retry later.", IsError: true}, nil
 	}
 	usage, err := t.plugin.chargeRenderUsage(ctx, tc, "xlsx", asset.ID, asset.SizeBytes, 1)
 	if err != nil {
 		_ = t.plugin.svc.RemoveConversationAsset(ctx, int(tc.userID), tc.conversationID, asset)
-		return &toolOutcome{ForModel: "XLSX 已渲染但文件费用入账失败：" + err.Error(), IsError: true}, nil
+		return &toolOutcome{ForModel: "The XLSX was rendered but billing the file fee failed: " + err.Error(), IsError: true}, nil
 	}
 	title := sanitizeDocumentTitle(input.Title)
 	return &toolOutcome{
-		ForModel: fmt.Sprintf("已生成 Excel 工作簿《%s》(XLSX, %dKB)并交付给用户。", title, asset.SizeBytes>>10),
+		ForModel: fmt.Sprintf("Generated Excel workbook %q (XLSX, %dKB) and delivered it to the user.", title, asset.SizeBytes>>10),
 		ForClient: map[string]any{"file": map[string]any{
 			"name": title + ".xlsx", "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 			"size": asset.SizeBytes, "src": asset.PublicURL, "asset_uri": assetURI(asset.ID),
 		}},
-		Terminal: true, TerminalMessage: "Excel 文件已生成，可通过文件卡下载。", Usage: usage,
+		Terminal: true, TerminalMessage: "Excel file generated. You can download it from the file card.", Usage: usage,
 	}, nil
 }
 
 func renderSpreadsheet(input spreadsheetInput) ([]byte, error) {
 	if strings.TrimSpace(input.Title) == "" {
-		return nil, fmt.Errorf("title 不能为空")
+		return nil, fmt.Errorf("title must not be empty")
 	}
 	if len(input.Sheets) == 0 || len(input.Sheets) > maxSpreadsheetSheets {
-		return nil, fmt.Errorf("Sheet 数量必须为 1-%d", maxSpreadsheetSheets)
+		return nil, fmt.Errorf("sheet count must be between 1 and %d", maxSpreadsheetSheets)
 	}
 	seen := make(map[string]struct{}, len(input.Sheets))
 	totalRows := 0
@@ -159,7 +159,7 @@ func renderSpreadsheet(input spreadsheetInput) ([]byte, error) {
 		totalRows += len(input.Sheets[i].Rows)
 	}
 	if totalRows > maxSpreadsheetRows {
-		return nil, fmt.Errorf("所有 Sheet 合计最多 %d 行", maxSpreadsheetRows)
+		return nil, fmt.Errorf("all sheets combined may contain at most %d rows", maxSpreadsheetRows)
 	}
 
 	f := excelize.NewFile()
@@ -198,30 +198,30 @@ func renderSpreadsheet(input spreadsheetInput) ([]byte, error) {
 func validateSpreadsheetSheet(sheet spreadsheetSheet, seen map[string]struct{}) error {
 	name := strings.TrimSpace(sheet.Name)
 	if name == "" || utf8.RuneCountInString(name) > 31 || strings.ContainsAny(name, `[]:*?/\\`) {
-		return fmt.Errorf("非法 Sheet 名：%q", sheet.Name)
+		return fmt.Errorf("invalid sheet name: %q", sheet.Name)
 	}
 	key := strings.ToLower(name)
 	if _, ok := seen[key]; ok {
-		return fmt.Errorf("Sheet 名重复：%q", name)
+		return fmt.Errorf("duplicate sheet name: %q", name)
 	}
 	seen[key] = struct{}{}
 	if len(sheet.Columns) == 0 || len(sheet.Columns) > maxSpreadsheetColumns {
-		return fmt.Errorf("Sheet %q 的列数必须为 1-%d", name, maxSpreadsheetColumns)
+		return fmt.Errorf("sheet %q must have between 1 and %d columns", name, maxSpreadsheetColumns)
 	}
 	for _, column := range sheet.Columns {
 		if strings.TrimSpace(column.Header) == "" {
-			return fmt.Errorf("Sheet %q 存在空表头", name)
+			return fmt.Errorf("sheet %q has an empty header", name)
 		}
 		if column.Width != 0 && (column.Width < 6 || column.Width > 60) {
-			return fmt.Errorf("Sheet %q 的列宽必须为 6-60", name)
+			return fmt.Errorf("sheet %q column width must be between 6 and 60", name)
 		}
 		if !validSpreadsheetType(column.Type) || !validSpreadsheetFormat(column.Format) {
-			return fmt.Errorf("Sheet %q 包含不支持的列类型或格式", name)
+			return fmt.Errorf("sheet %q contains an unsupported column type or format", name)
 		}
 	}
 	for rowIndex, row := range sheet.Rows {
 		if len(row) > len(sheet.Columns) {
-			return fmt.Errorf("Sheet %q 第 %d 行的单元格数超过列数", name, rowIndex+1)
+			return fmt.Errorf("sheet %q row %d has more cells than columns", name, rowIndex+1)
 		}
 	}
 	return nil
@@ -287,7 +287,7 @@ func writeSpreadsheetSheet(f *excelize.File, name string, sheet spreadsheetSheet
 			cell, _ := excelize.CoordinatesToCellName(columnIndex+1, rowIndex+2)
 			typed, err := spreadsheetCellValue(value, sheet.Columns[columnIndex])
 			if err != nil {
-				return fmt.Errorf("Sheet %q 第 %d 行第 %d 列：%w", name, rowIndex+1, columnIndex+1, err)
+				return fmt.Errorf("sheet %q row %d column %d: %w", name, rowIndex+1, columnIndex+1, err)
 			}
 			if err := setSpreadsheetCellValue(f, name, cell, typed); err != nil {
 				return err
@@ -356,11 +356,11 @@ func spreadsheetCellValue(value any, column spreadsheetColumn) (any, error) {
 		case string:
 			parsed, err := strconv.ParseBool(strings.TrimSpace(v))
 			if err != nil {
-				return nil, fmt.Errorf("无法解析布尔值 %q", v)
+				return nil, fmt.Errorf("cannot parse boolean %q", v)
 			}
 			return parsed, nil
 		default:
-			return nil, fmt.Errorf("布尔列需要 true/false")
+			return nil, fmt.Errorf("boolean column requires true/false")
 		}
 	case "date", "datetime":
 		text := fmt.Sprint(value)
@@ -370,11 +370,11 @@ func spreadsheetCellValue(value any, column spreadsheetColumn) (any, error) {
 				return parsed, nil
 			}
 		}
-		return nil, fmt.Errorf("日期必须使用 YYYY-MM-DD、YYYY-MM-DD HH:MM:SS 或 RFC3339")
+		return nil, fmt.Errorf("date must use YYYY-MM-DD, YYYY-MM-DD HH:MM:SS or RFC3339")
 	default:
 		text := fmt.Sprint(value)
 		if utf8.RuneCountInString(text) > maxSpreadsheetCellRunes {
-			return nil, fmt.Errorf("文本超过 %d 字符", maxSpreadsheetCellRunes)
+			return nil, fmt.Errorf("text exceeds %d characters", maxSpreadsheetCellRunes)
 		}
 		return text, nil
 	}
@@ -411,7 +411,7 @@ func spreadsheetNumber(value any) (float64, error) {
 	case string:
 		return strconv.ParseFloat(strings.TrimSpace(v), 64)
 	default:
-		return 0, fmt.Errorf("数值列包含非数值内容")
+		return 0, fmt.Errorf("number column contains a non-numeric value")
 	}
 }
 

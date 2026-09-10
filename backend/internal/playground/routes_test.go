@@ -156,7 +156,7 @@ func TestWriteHostForwardErrorUnavailable(t *testing.T) {
 	if strings.Contains(body, "upstream exploded") {
 		t.Fatalf("body = %q, want sanitized upstream error", body)
 	}
-	if !strings.Contains(body, "请求暂时无法完成，请稍后重试") {
+	if !strings.Contains(body, "The request could not be completed. Please try again later.") {
 		t.Fatalf("body = %q, want generic retry message", body)
 	}
 }
@@ -180,4 +180,51 @@ func TestModelSupportsChat(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 2026-09-11 review 回归：前端只允许本地化 hopbase_ 命名空间的固定兜底句。
+// 这三条锁住码与文案的对应关系——码错了，展示层就会用通用兜底句盖掉具体信息，
+// 或者把上游账号欠费显示成客户自己余额不足。
+func TestChatErrorCodesAreNamespacedOnlyForGenericFallbacks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("InvalidArgument with a reason keeps the plain code and the reason", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		writeHostForwardError(recorder, status.Error(codes.InvalidArgument, "tool schema rejected by upstream"))
+		body := recorder.Body.String()
+		if !strings.Contains(body, "tool schema rejected by upstream") {
+			t.Fatalf("body = %q, want the core reason replayed verbatim", body)
+		}
+		if !strings.Contains(body, `"code":"invalid_request"`) {
+			t.Fatalf("body = %q, want plain invalid_request code (not localizable)", body)
+		}
+		if strings.Contains(body, "hopbase_") {
+			t.Fatalf("body = %q, must not carry a localizable code when a reason exists", body)
+		}
+	})
+
+	t.Run("InvalidArgument without a reason falls back to the localizable code", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		writeHostForwardError(recorder, status.Error(codes.InvalidArgument, ""))
+		body := recorder.Body.String()
+		if !strings.Contains(body, `"code":"`+chatCodeInvalidRequest+`"`) {
+			t.Fatalf("body = %q, want %q", body, chatCodeInvalidRequest)
+		}
+		if !strings.Contains(body, chatErrInvalidRequest) {
+			t.Fatalf("body = %q, want the generic fallback message", body)
+		}
+	})
+
+	t.Run("balance and upstream codes are namespaced", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		writeHostForwardError(recorder, status.Error(codes.ResourceExhausted, "balance exhausted"))
+		if body := recorder.Body.String(); !strings.Contains(body, `"code":"`+chatCodeInsufficientBalance+`"`) {
+			t.Fatalf("body = %q, want %q", body, chatCodeInsufficientBalance)
+		}
+		recorder = httptest.NewRecorder()
+		writeHostForwardError(recorder, status.Error(codes.Unavailable, "boom"))
+		if body := recorder.Body.String(); !strings.Contains(body, `"code":"`+chatCodeUpstreamUnavailable+`"`) {
+			t.Fatalf("body = %q, want %q", body, chatCodeUpstreamUnavailable)
+		}
+	})
 }

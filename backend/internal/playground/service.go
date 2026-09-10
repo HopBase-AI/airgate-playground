@@ -48,13 +48,13 @@ func NewService(logger *slog.Logger, db *sql.DB, host sdk.Host, storage *ObjectS
 func (s *Service) CreateConversation(ctx context.Context, userID int, title string, groupID int64, platform, model string) (*Conversation, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("开启会话事务失败: %w", err)
+		return nil, fmt.Errorf("begin conversation transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if s.maxConversationsPerUser > 0 {
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, conversationLimitLockKey(userID)); err != nil {
-			return nil, fmt.Errorf("锁定会话数量失败: %w", err)
+			return nil, fmt.Errorf("lock conversation count: %w", err)
 		}
 		var count int
 		if err := tx.QueryRowContext(ctx,
@@ -62,7 +62,7 @@ func (s *Service) CreateConversation(ctx context.Context, userID int, title stri
 			 FROM playground_conversations
 			 WHERE user_id = $1`, userID,
 		).Scan(&count); err != nil {
-			return nil, fmt.Errorf("统计会话数量失败: %w", err)
+			return nil, fmt.Errorf("count conversations: %w", err)
 		}
 		if count >= s.maxConversationsPerUser {
 			return nil, &conversationLimitError{limit: s.maxConversationsPerUser}
@@ -76,10 +76,10 @@ func (s *Service) CreateConversation(ctx context.Context, userID int, title stri
 		 RETURNING id, created_at, updated_at`,
 		userID, title, groupID, platform, model,
 	).Scan(&conv.ID, &conv.CreatedAt, &conv.UpdatedAt); err != nil {
-		return nil, fmt.Errorf("写入会话失败: %w", err)
+		return nil, fmt.Errorf("insert conversation: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("提交会话事务失败: %w", err)
+		return nil, fmt.Errorf("commit conversation transaction: %w", err)
 	}
 	return conv, nil
 }
@@ -133,15 +133,15 @@ func (s *Service) UpdateConversation(ctx context.Context, userID int, convID int
 func (s *Service) DeleteConversation(ctx context.Context, userID int, convID int64) error {
 	assets, err := s.listConversationAssets(ctx, userID, convID)
 	if err != nil {
-		return fmt.Errorf("查询会话资产失败: %w", err)
+		return fmt.Errorf("query conversation assets: %w", err)
 	}
 	if err := s.deleteAssetsFromStorage(ctx, assets); err != nil {
-		return fmt.Errorf("删除会话资产失败: %w", err)
+		return fmt.Errorf("delete conversation assets: %w", err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("开启删除会话事务失败: %w", err)
+		return fmt.Errorf("begin conversation delete transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -149,16 +149,16 @@ func (s *Service) DeleteConversation(ctx context.Context, userID int, convID int
 		"DELETE FROM playground_assets WHERE user_id = $1 AND conversation_id = $2",
 		userID, convID,
 	); err != nil {
-		return fmt.Errorf("删除会话资产记录失败: %w", err)
+		return fmt.Errorf("delete conversation asset records: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM playground_conversations WHERE id = $1 AND user_id = $2",
 		convID, userID,
 	); err != nil {
-		return fmt.Errorf("删除会话失败: %w", err)
+		return fmt.Errorf("delete conversation: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交删除会话事务失败: %w", err)
+		return fmt.Errorf("commit conversation delete transaction: %w", err)
 	}
 	return nil
 }
@@ -614,7 +614,7 @@ func (s *Service) deleteAssetsFromStorage(ctx context.Context, assets []Asset) e
 func (s *Service) CleanupOrphanAssets(ctx context.Context, limit int) (int, error) {
 	assets, err := s.listOrphanAssets(ctx, limit)
 	if err != nil {
-		return 0, fmt.Errorf("查询孤儿资产失败: %w", err)
+		return 0, fmt.Errorf("query orphan assets: %w", err)
 	}
 	deleted := 0
 	var combinedErr error
@@ -764,7 +764,7 @@ type conversationLimitError struct {
 }
 
 func (e *conversationLimitError) Error() string {
-	return fmt.Sprintf("会话数量已达到上限（%d 个），请先删除旧会话后再创建新会话", e.limit)
+	return fmt.Sprintf("Conversation limit reached (%d). Delete an old conversation before creating a new one.", e.limit)
 }
 
 var conversationLimitLockNamespace int64 = 0x41475250

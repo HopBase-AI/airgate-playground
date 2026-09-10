@@ -128,7 +128,7 @@ func (r *pdfRenderer) RenderPDF(ctx context.Context, html []byte) ([]byte, error
 		}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("pdf 渲染失败: %w", err)
+		return nil, fmt.Errorf("pdf render failed: %w", err)
 	}
 	return pdf, nil
 }

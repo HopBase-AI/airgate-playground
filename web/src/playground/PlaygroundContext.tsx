@@ -56,6 +56,7 @@ import { processAttachments } from './attachments/processor';
 import { formatAttachmentErrors, formatAttachmentIssue } from './attachments/issues';
 import { styles } from './styles';
 import { CHAT_MODEL_REGISTRY } from './modelConfig';
+import { localizeChatError } from './chatErrors';
 import { appendStreamPart, upsertToolPart, type StreamPart, type ToolCallStatus } from './aui/streamState';
 import { persistedToolCallsFromStream } from './aui/convert';
 import type { PersistedToolCall } from '../api';
@@ -162,7 +163,7 @@ export function usePlayground() {
 }
 
 export function PlaygroundProvider({ children }: { children: ReactNode }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
@@ -520,9 +521,10 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       ...(conversationID > 0 ? { conversation_id: conversationID } : {}),
     };
 
-    const fail = (message: string) => {
+    const fail = (message: string, code?: string) => {
       if (activeIdRef.current === conversationID) {
-        setError(message);
+        // 后端只产英文；带 code 的网关错误在这里按界面语言本地化。
+        setError(localizeChatError(i18n.language, code, message));
         setRetryRequest(nextRetryRequest);
       }
       finishStreaming();
@@ -604,7 +606,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       if (abort.signal.aborted) return;
       fail(err instanceof Error ? err.message : 'stream failed');
     }
-  }, [finishStreaming, reasoningEffort, setMessages, t]);
+  }, [finishStreaming, i18n.language, reasoningEffort, setMessages, t]);
 
   // 发送用户消息。text 由调用方入参化：
   // - 文本路径：assistant-ui composer.send() → adapter.onNew 取 text parts 后调用

@@ -130,7 +130,7 @@ func hostInvoke(ctx context.Context, host sdk.Host, method string, payload map[s
 
 func hostInvokeWithOptions(ctx context.Context, host sdk.Host, method string, payload map[string]interface{}, idempotencyKey string, metadata map[string]string) (map[string]interface{}, error) {
 	if host == nil {
-		return nil, fmt.Errorf("core host 未启用")
+		return nil, fmt.Errorf("core host is not enabled")
 	}
 	resp, err := host.Invoke(ctx, sdk.HostInvokeRequest{
 		Method:         method,
@@ -148,7 +148,7 @@ func hostInvokeWithOptions(ctx context.Context, host sdk.Host, method string, pa
 		if msg, _ := resp.Payload["message"].(string); msg != "" {
 			return nil, fmt.Errorf("%s", msg)
 		}
-		return nil, fmt.Errorf("core 方法 %s 返回错误", method)
+		return nil, fmt.Errorf("core method %s returned an error", method)
 	}
 	return resp.Payload, nil
 }
@@ -178,7 +178,7 @@ func hostForward(ctx context.Context, host sdk.Host, req hostForwardRequest) (*h
 
 func hostForwardStream(ctx context.Context, host sdk.Host, req hostForwardRequest, onChunk func(hostForwardChunk) error) error {
 	if host == nil {
-		return fmt.Errorf("core host 未启用")
+		return fmt.Errorf("core host is not enabled")
 	}
 	req.Stream = true
 	stream, err := host.InvokeStream(ctx, sdk.HostStreamRequest{
