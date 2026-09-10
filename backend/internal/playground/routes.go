@@ -970,16 +970,31 @@ const (
 	chatErrInsufficientBalance = "Insufficient balance."
 )
 
-// memberGroupForbiddenHint core 拒绝成员使用白名单外分组时的错误文案片段
-// （auth.ErrMemberGroupForbidden＝"所属团队成员无权使用该分组"）。插件不能 import core，只能按文案识别。
-// ⚠️ 这是匹配 core 内部错误文本的**判别串**，不是回给客户的文案，必须与 core 保持一致，
-// 不可英文化（英文化会让成员分组白名单拒绝退化成通用 upstream_error）。
-const memberGroupForbiddenHint = "无权使用该分组"
+// memberGroupForbiddenHints core 拒绝成员使用白名单外分组时的错误文案片段。
+// 插件不能 import core，只能按文案识别，所以这里是**判别串**而非对外文案——
+// 它们必须跟着 core 的实际输出走，不能按"对外一律英文"的纪律去改。
+//
+// 两条都要留：core 2026-09-10 起把该错误改成英文（gw.member_group_forbidden＝
+// "This member is not allowed to use the group bound to this API key"），
+// 但线上回滚到旧 core 时仍是中文（auth.ErrMemberGroupForbidden＝"所属团队成员无权使用该分组"）。
+// 只认其中一条，另一形态就会退化成通用 upstream_error，成员分组白名单的拒绝理由丢失。
+var memberGroupForbiddenHints = []string{
+	"not allowed to use the group",
+	"无权使用该分组",
+}
 
 // isMemberGroupForbiddenError 判断 core 是否因成员分组白名单显式拒绝了转发（PermissionDenied）。
 func isMemberGroupForbiddenError(err error) bool {
 	s, ok := status.FromError(err)
-	return ok && s.Code() == codes.PermissionDenied && strings.Contains(s.Message(), memberGroupForbiddenHint)
+	if !ok || s.Code() != codes.PermissionDenied {
+		return false
+	}
+	for _, hint := range memberGroupForbiddenHints {
+		if strings.Contains(s.Message(), hint) {
+			return true
+		}
+	}
+	return false
 }
 
 // forwardErrorIsMemberGroupForbidden 把两种形态的"成员无权用该模型"归一：

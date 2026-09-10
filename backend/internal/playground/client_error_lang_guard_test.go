@@ -16,7 +16,7 @@ package playground
 //   - metadata.go 整个文件：后台插件配置表单的 Label/Description/Placeholder，只在管理员控制台出现；
 //   - BuildPluginInfo：同上；
 //   - slog 日志（Debug/Info/Warn/Error）与 Go 注释：只进日志与源码；
-//   - memberGroupForbiddenHint：匹配 core 内部错误文本的判别串，必须与 core 保持一致，
+//   - memberGroupForbiddenHints：匹配 core 内部错误文本的判别串，必须与 core 保持一致，
 //     英文化会让"成员分组白名单拒绝"退化成通用 upstream_error（见 routes.go 注释）。
 
 import (
@@ -91,7 +91,7 @@ func isAdminOnlyFunc(name string) bool {
 
 // allowedHanIdents：明确豁免的汉字常量（匹配 core 内部错误文本用，不回放给客户）。
 var allowedHanIdents = map[string]bool{
-	"memberGroupForbiddenHint": true,
+	"memberGroupForbiddenHints": true,
 }
 
 func containsHan(s string) bool {
